@@ -586,6 +586,20 @@ async def public_home():
     }
     return {"settings": settings, "spotlights": [{"id": m["id"], "name": m["name"], "state": m.get("state"), "photo": m.get("photo"), "focus_areas": m.get("focus_areas", []), "bio": m.get("bio")} for m in spotlights], "announcements": ann, "events": events, "stats": stats}
 
+@api_router.get("/public/gallery")
+async def public_gallery():
+    """Photos from post-event reports of public events — Community Impact gallery."""
+    items = []
+    async for ev in db.events.find({"public": True, "reports": {"$exists": True, "$ne": []}}, {"_id": 0}).sort("date", -1):
+        for r in ev.get("reports", []):
+            for pid in r.get("photo_file_ids", []):
+                items.append({
+                    "photo_id": pid, "event_id": ev["id"], "event_name": ev.get("name"),
+                    "state": ev.get("state"), "date": ev.get("date"),
+                    "location": ev.get("location"), "highlights": r.get("highlights"),
+                })
+    return items
+
 # ---------------- files ----------------
 @api_router.post("/upload")
 async def upload_file(file: UploadFile = File(...), category: str = Form("general"), user=Depends(get_current_user)):
@@ -631,6 +645,8 @@ async def _is_public_file(file_id: str) -> bool:
     if await db.members.find_one({"photo": file_id, "public_profile": True}, {"_id": 0}):
         return True
     if await db.announcements.find_one({"image_file_id": file_id, "public": True, "published": True}, {"_id": 0}):
+        return True
+    if await db.events.find_one({"public": True, "reports.photo_file_ids": file_id}, {"_id": 0}):
         return True
     return False
 

@@ -15,6 +15,7 @@ import ResourcesPublic from "@/pages/public/ResourcesPublic";
 import FAQ from "@/pages/public/FAQ";
 import Contact from "@/pages/public/Contact";
 import Directory from "@/pages/public/Directory";
+import Gallery from "@/pages/public/Gallery";
 import Apply from "@/pages/public/Apply";
 import Login from "@/pages/public/Login";
 
@@ -88,6 +89,7 @@ function AppRouter() {
       <Route path="/faq" element={<FAQ />} />
       <Route path="/contact" element={<Contact />} />
       <Route path="/directory" element={<Directory />} />
+      <Route path="/gallery" element={<Gallery />} />
       <Route path="/apply" element={<Apply />} />
       <Route path="/login" element={<Login />} />
 

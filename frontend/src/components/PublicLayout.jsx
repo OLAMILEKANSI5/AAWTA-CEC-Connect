@@ -12,6 +12,7 @@ const NAV = [
   { to: "/volunteer", label: "Volunteer" },
   { to: "/programs", label: "Programs & Impact" },
   { to: "/directory", label: "Directory" },
+  { to: "/gallery", label: "Gallery" },
   { to: "/resources", label: "Resources" },
   { to: "/faq", label: "FAQ" },
   { to: "/contact", label: "Contact" },
