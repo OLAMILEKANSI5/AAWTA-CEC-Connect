@@ -204,7 +204,7 @@ DEFAULT_SETTINGS = {
     "website": "https://www.aawta.org",
     "calendar_link": "https://calendar.google.com",
     "slack_link": "https://aawtaworkspace.slack.com/archives/C0ALPLXG5T5",
-    "membership_link": "https://www.aawta.org",
+    "membership_link": "https://www.zeffy.com/ticketing/aawta-memberships--2025-2",
 }
 
 async def get_settings_doc():

@@ -10,8 +10,8 @@ export default function ResourcesPublic() {
   const cards = [
     { i: Globe, t: "AAWTA Main Website", d: "Learn about the association and membership.", url: settings.website },
     { i: Calendar, t: "AAWTA Calendar", d: "See upcoming AAWTA and CEC events.", url: settings.calendar_link },
-    { i: MessageSquare, t: "AAWTA Slack", d: "Connect with the community (members).", url: settings.slack_link },
-    { i: UserPlus, t: "Become a Member", d: "Join the African American Women Trucking Association.", url: settings.membership_link },
+    { i: MessageSquare, t: "Access CEC Slack Workspace", d: "Connect with the community (members).", url: settings.slack_link },
+    { i: UserPlus, t: "AAWTA Membership", d: "Join the African American Women Trucking Association.", url: settings.membership_link },
   ];
   return (
     <PublicLayout>
@@ -20,7 +20,7 @@ export default function ResourcesPublic() {
       </section>
       <section className="max-w-7xl mx-auto px-4 py-16 grid sm:grid-cols-2 lg:grid-cols-4 gap-6">
         {cards.map((c, i) => (
-          <a key={i} href={c.url || "#"} target="_blank" rel="noreferrer" data-testid={`public-resource-${i}`}
+          <a key={i} href={c.url || "#"} target="_blank" rel="noopener noreferrer" data-testid={`public-resource-${i}`}
             className="bg-white border border-slate-200 rounded-2xl p-6 hover:-translate-y-1 hover:shadow-lg transition-all group">
             <div className="h-11 w-11 rounded-xl bg-brand-magenta/10 text-brand-magenta flex items-center justify-center mb-4"><c.i size={20} /></div>
             <h3 className="font-head font-bold text-brand-navy flex items-center gap-1">{c.t} <ExternalLink size={14} className="opacity-0 group-hover:opacity-100 transition-opacity" /></h3>

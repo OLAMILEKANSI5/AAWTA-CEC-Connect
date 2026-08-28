@@ -1,0 +1,19 @@
+{
+  "summary": "Round 4 focused link-correction verification. Backend: 4/4 pytest cases pass (GET /api/settings returns exact Slack + Zeffy URLs, no _id leak; PUT /api/settings staff-only — member tok_amb 403, unauthenticated 401/403, staff update persists and other fields untouched). Frontend: verified public /resources and member /portal/resources quick-link cards on desktop (1920x800) and mobile (390x800) — labels 'Access CEC Slack Workspace' / 'AAWTA Membership', exact hrefs, target=_blank, rel='noopener noreferrer' all correct. Staff 'Edit Quick Links' round-trip verified: button visible only for super_admin (hidden for tok_amb), dialog has all 4 fields (website, calendar_link, slack_link, membership_link) prefilled, save updates card href immediately and persists after reload; required URLs restored afterwards (confirmed via API).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": ["/app/backend/tests/test_round4_links.py"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Optional hardening: PUT /api/settings accepts any string for slack_link/membership_link with no URL scheme validation — an admin typo like 'javascript:...' or a bare word would be rendered directly into the card href. Consider a Pydantic HttpUrl/scheme check.",
+    "Leftover QA seed row 'QA Resource 1787904494' from an earlier iteration is still visible in the Resource Center list; clean up test data."
+  ],
+  "updated_files": ["/app/backend/tests/test_round4_links.py"],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "seed_data_creation": "None persisted. Temporary slack/membership URLs were written during edit-round-trip tests and restored to the required values (verified via GET /api/settings).",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": false,
+  "test_credentials": "cookie session_token=tok_admin (super_admin) / tok_amb (member); Bearer same tokens for API",
+  "context_for_next_testing_agent": "Quick-link form fields use data-testid 'field-<name>' (from components/FormFields.jsx Field), NOT input[name=...] — use [data-testid=\"field-slack_link\"] etc. Quick-link cards: portal quick-resource-0..3, public public-resource-0..3. Round-4 link tests live in /app/backend/tests/test_round4_links.py and are self-restoring.",
+  "rca_of_the_issue": "No defects found this round; the earlier in-run selector failure was a test-side issue (wrong input selector), fixed in the script."
+}
