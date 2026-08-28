@@ -23,6 +23,7 @@ export default function Reports() {
     try { const { data } = await api.get(`/reports/${key}`); setPreview(data); } catch { toast.error("Failed"); }
   };
   const exportCsv = (key) => { window.open(`${API}/reports/${key}?format=csv`, "_blank"); };
+  const exportPdf = (key) => { window.open(`${API}/reports/${key}?format=pdf`, "_blank"); };
 
   return (
     <div className="space-y-5">
@@ -33,9 +34,10 @@ export default function Reports() {
             <div className="h-10 w-10 rounded-lg bg-brand-magenta/10 text-brand-magenta flex items-center justify-center mb-3"><BarChart3 size={18} /></div>
             <p className="font-head font-semibold text-brand-navy">{r.label}</p>
             <p className="text-sm text-slate-500 mt-1">{r.desc}</p>
-            <div className="flex gap-2 mt-4">
+            <div className="flex flex-wrap gap-2 mt-4">
               <Button size="sm" variant="outline" onClick={() => view(r.key)} data-testid={`view-report-${r.key}`}><FileText size={14} className="mr-1" /> Preview</Button>
               <Button size="sm" onClick={() => exportCsv(r.key)} data-testid={`export-report-${r.key}`} className="bg-brand-navy hover:bg-brand-navy-dark"><Download size={14} className="mr-1" /> CSV</Button>
+              <Button size="sm" onClick={() => exportPdf(r.key)} data-testid={`export-pdf-${r.key}`} className="bg-brand-magenta hover:bg-brand-pink"><Download size={14} className="mr-1" /> PDF</Button>
             </div>
           </div>
         ))}

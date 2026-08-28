@@ -1,11 +1,12 @@
 import React, { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Calendar, Plus, MapPin, ExternalLink, CalendarPlus, Download } from "lucide-react";
+import { Calendar, Plus, MapPin, ExternalLink, CalendarPlus, Download, Camera, Image, X } from "lucide-react";
 import { api, API, useAuth } from "@/auth";
 import { PageTitle, Loading, EmptyState, StatusBadge } from "@/components/shared";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
 import { Field, SelectField } from "@/components/FormFields";
+import { UploadButton } from "@/components/PortalUpload";
 import { US_STATES, EVENT_STATUSES } from "@/lib/constants";
 
 const STAFF = ["super_admin", "director", "administrator"];
@@ -17,13 +18,32 @@ export default function Events() {
   const [settings, setSettings] = useState({});
   const [open, setOpen] = useState(false);
   const [f, setF] = useState({});
+  const [reportEvent, setReportEvent] = useState(null);
+  const [rep, setRep] = useState({ photos: [], files: [] });
+  const [viewReports, setViewReports] = useState(null);
   const on = (k, v) => setF((p) => ({ ...p, [k]: v }));
+  const onR = (k, v) => setRep((p) => ({ ...p, [k]: v }));
 
   const load = () => api.get("/events").then((r) => setEvents(r.data)).catch(() => setEvents([]));
   useEffect(() => { load(); api.get("/settings").then((r) => setSettings(r.data)).catch(() => {}); }, []);
 
   const submit = async () => { if (!f.name) { toast.error("Event name required"); return; } try { await api.post("/events", f); toast.success(isStaff ? "Event added" : "Event submitted for review"); setOpen(false); setF({}); load(); } catch { toast.error("Failed"); } };
   const setStatus = async (id, status) => { await api.put(`/events/${id}/status`, { status }); toast.success(status); load(); };
+  const submitReport = async () => {
+    if (!rep.outcomes) { toast.error("Please describe the outcomes"); return; }
+    try {
+      await api.post(`/events/${reportEvent.id}/report`, {
+        actual_attendance: rep.actual_attendance ? Number(rep.actual_attendance) : null,
+        outcomes: rep.outcomes, highlights: rep.highlights,
+        photo_file_ids: rep.photos.map((p) => p.id), file_ids: rep.files.map((x) => x.id),
+      });
+      toast.success("Post-event report submitted"); setReportEvent(null); setRep({ photos: [], files: [] }); load();
+    } catch (e) { toast.error(e?.response?.data?.detail || "Failed"); }
+  };
+  const openReports = async (ev) => {
+    try { const { data } = await api.get(`/events/${ev.id}/reports`); setViewReports({ ev, reports: data }); }
+    catch { toast.error("Could not load reports"); }
+  };
   const toYmd = (dt) => dt.toISOString().slice(0, 10).replace(/-/g, "");
   const gcalUrl = (e) => {
     if (!e.date) return "#";
@@ -73,6 +93,8 @@ export default function Events() {
                 <div className="flex flex-wrap gap-2 mt-3">
                   <a href={gcalUrl(e)} target="_blank" rel="noreferrer" data-testid={`gcal-${e.id}`}><Button size="sm" variant="outline" className="text-brand-navy border-brand-navy/30"><CalendarPlus size={14} className="mr-1" /> Add to Google</Button></a>
                   <a href={`${API}/events/${e.id}/ics`} data-testid={`ics-${e.id}`}><Button size="sm" variant="outline"><Download size={14} className="mr-1" /> .ics</Button></a>
+                  {(isStaff || e.submitted_by_id === user?.user_id) && <Button size="sm" onClick={() => setReportEvent(e)} data-testid={`report-event-${e.id}`} className="bg-brand-magenta hover:bg-brand-pink"><Camera size={14} className="mr-1" /> Post-Event Report</Button>}
+                  {(e.reports?.length > 0) && <Button size="sm" variant="outline" onClick={() => openReports(e)} data-testid={`view-reports-${e.id}`}><Image size={14} className="mr-1" /> Reports ({e.reports.length})</Button>}
                 </div>
               )}
               {isStaff && ["Submitted", "Under Review"].includes(e.status) && (
@@ -85,6 +107,54 @@ export default function Events() {
           ))}
         </div>
       )}
+
+      <Dialog open={!!reportEvent} onOpenChange={(o) => !o && setReportEvent(null)}>
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+          <DialogHeader><DialogTitle>Post-Event Report — {reportEvent?.name}</DialogTitle></DialogHeader>
+          <div className="space-y-4">
+            <Field label="Actual attendance" name="actual_attendance" type="number" value={rep.actual_attendance} onChange={onR} />
+            <Field label="Outcomes" name="outcomes" value={rep.outcomes} onChange={onR} textarea required />
+            <Field label="Highlights" name="highlights" value={rep.highlights} onChange={onR} textarea />
+            <div>
+              <span className="text-sm text-slate-700">Photos</span>
+              {rep.photos.length > 0 && <div className="flex flex-wrap gap-2 my-2">{rep.photos.map((p) => (
+                <span key={p.id} className="flex items-center gap-1 text-xs bg-slate-100 rounded-full px-2 py-1">{p.filename} <button onClick={() => onR("photos", rep.photos.filter((x) => x.id !== p.id))}><X size={12} /></button></span>
+              ))}</div>}
+              <UploadButton testid="report-photo-upload" category="event-photo" accept="image/*" label="Add photo" onUploaded={(x) => onR("photos", [...rep.photos, x])} />
+            </div>
+            <div>
+              <span className="text-sm text-slate-700">Supporting files (flyers, reports)</span>
+              {rep.files.length > 0 && <div className="flex flex-wrap gap-2 my-2">{rep.files.map((p) => (
+                <span key={p.id} className="flex items-center gap-1 text-xs bg-slate-100 rounded-full px-2 py-1">{p.filename} <button onClick={() => onR("files", rep.files.filter((x) => x.id !== p.id))}><X size={12} /></button></span>
+              ))}</div>}
+              <UploadButton testid="report-file-upload" category="event-file" label="Add file" onUploaded={(x) => onR("files", [...rep.files, x])} />
+            </div>
+          </div>
+          <DialogFooter><Button onClick={submitReport} data-testid="submit-event-report-btn" className="bg-brand-magenta hover:bg-brand-pink">Submit Report</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!viewReports} onOpenChange={(o) => !o && setViewReports(null)}>
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+          <DialogHeader><DialogTitle>Reports — {viewReports?.ev?.name}</DialogTitle></DialogHeader>
+          <div className="space-y-4">
+            {viewReports?.reports?.map((r) => (
+              <div key={r.id} className="border border-slate-200 rounded-lg p-4">
+                <p className="text-xs text-slate-400">{r.submitted_by} · {new Date(r.created_at).toLocaleDateString()}</p>
+                {r.actual_attendance != null && <p className="text-sm mt-1"><b>Attendance:</b> {r.actual_attendance}</p>}
+                <p className="text-sm mt-1"><b>Outcomes:</b> {r.outcomes}</p>
+                {r.highlights && <p className="text-sm mt-1"><b>Highlights:</b> {r.highlights}</p>}
+                {r.photos?.length > 0 && <div className="grid grid-cols-3 gap-2 mt-2">{r.photos.map((p) => (
+                  <a key={p.id} href={`${API}/files/${p.id}/download`} target="_blank" rel="noreferrer"><img src={`${API}/files/${p.id}/download`} alt="" className="h-20 w-full object-cover rounded-md" /></a>
+                ))}</div>}
+                {r.files?.length > 0 && <div className="mt-2 space-y-1">{r.files.map((file) => (
+                  <a key={file.id} href={`${API}/files/${file.id}/download`} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-xs text-brand-navy underline"><Download size={12} /> {file.original_filename}</a>
+                ))}</div>}
+              </div>
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

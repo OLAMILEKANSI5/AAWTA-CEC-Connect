@@ -1,0 +1,51 @@
+{
+  "summary": "Independently verified all 4 round-3 items (Slack-link bug fix, report PDF export, message threads with attachments, post-event reports) via a new pytest suite (/app/backend/tests/test_round3_features.py, 27 tests, 27 passed) plus 3 Playwright UI flows against the preview URL. All requested behaviours and 403/400/404 access-control cases behave as specified. No functional defects found; 2 minor issues reported below.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/events/{id}/reports", "issue": "No authorization beyond 'is logged in'. An unrelated ambassador (non-owner, non-participant, non-staff) gets 200 and can read any event's post-event report outcomes + photo/file metadata (verified with a temp ambassador session). POST /report is correctly restricted to owner/staff — the GET should be restricted the same way (owner + staff, or public events only)."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "Portal Messages page load as a member", "issue": "Messages.jsx (line 28) fires api.get(isStaff ? '/members' : '/users'); for non-staff users '/users' is staff-only so every load logs 2x 'Failed to load resource: 403' console errors. The call is unnecessary for members (member list is never used in their dialog). Skip the request when !isStaff.", "affected_selectors": ["/portal/messages"]}
+    ],
+    "design_issues": []
+  },
+  "verified": [
+    "GET /api/settings -> slack_link == 'https://aawtaworkspace.slack.com/archives/C0ALPLXG5T5'.",
+    "UI: public /resources Slack card (public-resource-2) href == the new Slack URL; portal /portal/resources quick-resource-2 text 'AAWTA Slack' href == the new Slack URL (cookie tok_amb).",
+    "GET /api/reports/{type}?format=pdf -> 200 application/pdf, %PDF- magic, >800 bytes, Content-Disposition attachment filename=<type>.pdf for all 6 types (applications, ambassadors, volunteers, goals, volunteer_hours, events). CSV (text/csv) and default JSON ({rows,count}) still work. Member tok_amb -> 403; anonymous -> 401; unknown report type -> 400.",
+    "UI /portal/reports (tok_admin): all 6 export-pdf-<key> buttons present + enabled; clicking export-pdf-events triggers a real download (events.pdf, 2088 bytes, %PDF-). No console/page errors.",
+    "Message threads API: POST /messages with file_ids creates thread; GET /messages/{tid}/thread returns subject + messages with resolved files[] metadata; POST /messages/{tid}/reply appends is_reply message with correct subject/recipients; both admin and ambassador then see 2 messages. Unknown thread -> 404 on both endpoints. Non-participant ambassador -> 403 on GET thread and POST reply. Anonymous -> 401.",
+    "UI message thread flow: admin sends new message with attachment (message-attach) to Amara Bell; ambassador opens thread-<id>, sees 1 bubble + admin_note.txt link (credentialed fetch 200 text/plain), types reply-input, attaches via reply-attach, clicks send-reply-btn -> 'Reply sent' toast and 2 bubbles with amb_reply.txt; admin reopening the same thread sees both messages including the ambassador reply (state synced).",
+    "Post-event reports API: owner ambassador POST /events/evt1/report -> 200, event status becomes Completed, GET /events/evt1/reports returns report with photos[] (id + original_filename) and files[]. Missing outcomes -> 422. Non-owner non-staff -> 403. Event in 'Submitted' status -> 400. Unknown event -> 404 (POST and GET). Anonymous -> 401. Staff can read reports.",
+    "UI post-event report flow: created a new ambassador-owned event, admin approved it; report-event-<id> button visible+enabled on the Approved card; dialog fields field-actual_attendance / field-outcomes / field-highlights filled, report-photo-upload and report-file-upload chips appear after upload, submit-event-report-btn succeeds; card flips to 'Completed' and view-reports-<id> ('Reports (1)') dialog shows attendance 87, outcomes, highlights, photo thumbnail (image fetch 200 image/png) and attendance.txt download link."
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_round3_features.py",
+    "/app/test_reports/pytest/pytest_results_round3.xml"
+  ],
+  "action_items": [
+    "Add owner/staff authorization to GET /api/events/{id}/reports (currently any authenticated user can read any event's report content).",
+    "Messages.jsx: don't call GET /users for non-staff users (avoids 2 console 403s per page load)."
+  ],
+  "critical_code_review_comments": [
+    "server.py is now ~1487 lines (guideline is <700). Reports/PDF builders, messages and events are good candidates to split into routers.",
+    "_build_report_pdf truncates every cell to 40 chars ([:40]) with no ellipsis and uses landscape letter with equal auto-width columns — wide reports (e.g. applications with 7 columns) will silently lose data in the PDF while the CSV keeps it. Consider Paragraph wrapping or a note that PDF is a summary view.",
+    "POST /api/events/{id}/report allows repeat submissions on an already-Completed event (reports are pushed to an array). If only one report per event/ambassador is intended, add a guard; otherwise it's fine but the 'Reports (n)' count can grow from accidental double submits (no client-side disable on the submit button while the request is in flight).",
+    "submit_event_report re-sets status to 'Completed' even for staff-submitted reports on future-dated Approved events — a report submitted early will mark an upcoming event Completed.",
+    "get_thread updates read_by for all messages in the thread including ones where the user is not a recipient; harmless but means staff previews mark threads read for reporting purposes."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_round3_features.py (new, 27 tests)"
+  ],
+  "success_rate": {"backend": "100% (27/27 round-3 tests)", "frontend": "100% (3/3 UI flows: resources+PDF, message threads, post-event report)"},
+  "seed_data_creation": "Temporary TEST_user_other3 / TEST_tok_other3 / TEST_mem_other3 ambassador created+deleted by fixture for 403 checks. All test artifacts cleaned up afterwards: TEST_/UITEST messages, uploaded test files, the UITEST/TEST events, and the extra report pushed onto evt1 (evt1 restored to status Completed with its original single report). Only seeded event 'CEC Career Day' remains.",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "tok_admin (super_admin, user_admin1), tok_amb (ambassador, user_amb1 / mem_amb1). Browser: cookie session_token=<token>, domain=preview host, secure, sameSite=None.",
+  "context_for_next_testing_agent": "Round-3 features covered by /app/backend/tests/test_round3_features.py (uses conftest.py fixtures anon/admin/member + a mongo-seeded TEST_tok_other3 ambassador for 403 cases). Note: the upload endpoint is POST /api/upload (not /api/files/upload). Portal form inputs use data-testid=field-<name> (FormFields.jsx) and UploadButton exposes data-testid on the <label>, so use '[data-testid=\"x\"] input[type=file]' for set_input_files. Message thread grouping is client-side from GET /api/messages. Server clock reads 2026-08-28.",
+  "rca_of_the_issue": "N/A - no product defect reproduced. The GET /api/events/{id}/reports over-permissiveness is a missing authorization check (endpoint only depends on get_current_user, unlike the POST which checks submitted_by_id/STAFF_ROLES)."
+}

@@ -203,7 +203,7 @@ DEFAULT_SETTINGS = {
     "email": "aawtassn@gmail.com",
     "website": "https://www.aawta.org",
     "calendar_link": "https://calendar.google.com",
-    "slack_link": "https://slack.com",
+    "slack_link": "https://aawtaworkspace.slack.com/archives/C0ALPLXG5T5",
     "membership_link": "https://www.aawta.org",
 }
 
@@ -760,6 +760,53 @@ async def read_message(msg_id: str, user=Depends(get_current_user)):
     await db.messages.update_one({"id": msg_id}, {"$addToSet": {"read_by": user["user_id"]}})
     return {"ok": True}
 
+class ReplyIn(BaseModel):
+    body: str
+    file_ids: List[str] = []
+
+async def _files_meta(ids):
+    out = []
+    for fid in ids or []:
+        f = await db.files.find_one({"id": fid}, {"_id": 0, "id": 1, "original_filename": 1})
+        if f: out.append(f)
+    return out
+
+@api_router.get("/messages/{thread_id}/thread")
+async def get_thread(thread_id: str, user=Depends(get_current_user)):
+    msgs = await db.messages.find({"thread_id": thread_id}, {"_id": 0}).sort("created_at", 1).to_list(1000)
+    if not msgs:
+        raise HTTPException(404, "Thread not found")
+    allowed = set()
+    for m in msgs:
+        allowed |= set(m.get("recipient_ids", [])) | {m.get("from_id")}
+    if user["role"] not in STAFF_ROLES and user["user_id"] not in allowed:
+        raise HTTPException(403, "Forbidden")
+    await db.messages.update_many({"thread_id": thread_id}, {"$addToSet": {"read_by": user["user_id"]}})
+    for m in msgs:
+        m["files"] = await _files_meta(m.get("file_ids"))
+    return {"thread_id": thread_id, "subject": msgs[0].get("subject"), "messages": msgs}
+
+@api_router.post("/messages/{thread_id}/reply")
+async def reply_message(thread_id: str, payload: ReplyIn, user=Depends(get_current_user)):
+    thread = await db.messages.find({"thread_id": thread_id}, {"_id": 0}).to_list(1000)
+    if not thread:
+        raise HTTPException(404, "Thread not found")
+    participants = set()
+    for m in thread:
+        participants |= set(m.get("recipient_ids", [])) | {m.get("from_id")}
+    if user["role"] not in STAFF_ROLES and user["user_id"] not in participants:
+        raise HTTPException(403, "Forbidden")
+    recipients = [p for p in participants if p and p != user["user_id"]]
+    root = thread[0]
+    msg = {"id": new_id("msg"), "thread_id": thread_id, "subject": root.get("subject"), "body": payload.body,
+           "from_id": user["user_id"], "from_name": user["name"], "from_role": user["role"],
+           "recipient_ids": recipients, "file_ids": payload.file_ids, "read_by": [user["user_id"]], "is_reply": True, "created_at": now_iso()}
+    await db.messages.insert_one(dict(msg))
+    for rid in recipients:
+        await notify_user(rid, f"Reply: {root.get('subject')}", payload.body[:120], "/portal/messages")
+    await log_audit(user, "message_replied", "message", msg["id"])
+    return clean(msg)
+
 # ---------------- announcements ----------------
 class AnnouncementIn(BaseModel):
     title: str
@@ -864,6 +911,43 @@ async def update_event_status(event_id: str, payload: Dict[str, Any], user=Depen
     if ev.get("submitted_by_id"):
         await notify_user(ev["submitted_by_id"], f"Event '{ev['name']}' {status}", "", "/portal/events")
     return {"ok": True}
+
+class EventReportIn(BaseModel):
+    actual_attendance: Optional[int] = None
+    outcomes: str
+    highlights: Optional[str] = None
+    photo_file_ids: List[str] = []
+    file_ids: List[str] = []
+
+@api_router.post("/events/{event_id}/report")
+async def submit_event_report(event_id: str, payload: EventReportIn, user=Depends(get_current_user)):
+    ev = await db.events.find_one({"id": event_id}, {"_id": 0})
+    if not ev:
+        raise HTTPException(404, "Event not found")
+    if ev.get("status") not in ("Approved", "Scheduled", "Completed"):
+        raise HTTPException(400, "Reports can only be submitted for approved events")
+    if user["role"] not in STAFF_ROLES and ev.get("submitted_by_id") != user["user_id"]:
+        raise HTTPException(403, "You can only report on your own events")
+    report = {"id": new_id("erep"), **payload.model_dump(), "submitted_by": user["name"],
+              "submitted_by_id": user["user_id"], "created_at": now_iso()}
+    await db.events.update_one({"id": event_id}, {"$push": {"reports": report}, "$set": {"status": "Completed"}})
+    await log_audit(user, "event_report_submitted", "event", event_id)
+    asyncio.create_task(notify_admins(f"Post-event report: {ev['name']}", "Post-Event Report",
+                                      ep(f"{user['name']} submitted a post-event report for <strong>{ev['name']}</strong>.")))
+    return report
+
+@api_router.get("/events/{event_id}/reports")
+async def get_event_reports(event_id: str, user=Depends(get_current_user)):
+    ev = await db.events.find_one({"id": event_id}, {"_id": 0})
+    if not ev:
+        raise HTTPException(404, "Not found")
+    if user["role"] not in STAFF_ROLES and ev.get("submitted_by_id") != user["user_id"] and not ev.get("public"):
+        raise HTTPException(403, "Forbidden")
+    reports = ev.get("reports", [])
+    for r in reports:
+        r["photos"] = await _files_meta(r.get("photo_file_ids"))
+        r["files"] = await _files_meta(r.get("file_ids"))
+    return reports
 
 # ---------------- goals ----------------
 class GoalIn(BaseModel):
@@ -1105,7 +1189,44 @@ async def get_report(report_type: str, format: str = "json", user=Depends(requir
         await log_audit(user, "report_exported", "report", report_type, {"format": "csv"})
         return StreamingResponse(io.BytesIO(buf.getvalue().encode()), media_type="text/csv",
                                  headers={"Content-Disposition": f'attachment; filename="{report_type}.csv"'})
+    if format == "pdf":
+        pdf = await asyncio.to_thread(_build_report_pdf, report_type, rows)
+        await log_audit(user, "report_exported", "report", report_type, {"format": "pdf"})
+        return StreamingResponse(io.BytesIO(pdf), media_type="application/pdf",
+                                 headers={"Content-Disposition": f'attachment; filename="{report_type}.pdf"'})
     return {"rows": rows, "count": len(rows)}
+
+def _build_report_pdf(report_type: str, rows: list) -> bytes:
+    from reportlab.lib.pagesizes import letter, landscape
+    from reportlab.lib import colors
+    from reportlab.lib.units import inch
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+    from reportlab.lib.styles import getSampleStyleSheet
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=landscape(letter), topMargin=54, bottomMargin=40, leftMargin=36, rightMargin=36)
+    styles = getSampleStyleSheet()
+    title = Paragraph(f"<b>AAWTA CEC Connect</b> — {report_type.replace('_', ' ').title()} Report", styles["Title"])
+    sub = Paragraph(f"Generated {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')} · {len(rows)} record(s)", styles["Normal"])
+    elems = [title, sub, Spacer(1, 14)]
+    if rows:
+        headers = [h.replace("_", " ").title() for h in rows[0].keys()]
+        data = [headers] + [[str(v if v is not None else "—")[:40] for v in r.values()] for r in rows]
+        t = Table(data, repeatRows=1)
+        t.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#2E3192")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, -1), 8),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#FAF5FB")]),
+            ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#E5E7EB")),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING", (0, 0), (-1, -1), 5), ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ]))
+        elems.append(t)
+    else:
+        elems.append(Paragraph("No records found.", styles["Normal"]))
+    doc.build(elems)
+    return buf.getvalue()
 
 @api_router.get("/audit-logs")
 async def get_audit_logs(user=Depends(require_roles("super_admin", "director")), q: Optional[str] = None):
