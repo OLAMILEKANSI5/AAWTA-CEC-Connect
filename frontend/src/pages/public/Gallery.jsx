@@ -24,9 +24,11 @@ export default function Gallery() {
             {items.map((it, i) => (
               <button key={`${it.photo_id}-${i}`} onClick={() => setActive(it)} data-testid={`gallery-item-${i}`}
                 className="group relative rounded-xl overflow-hidden aspect-square bg-brand-navy/5 focus:outline-none focus:ring-2 focus:ring-brand-magenta">
-                <img src={`${API}/public/files/${it.photo_id}`} alt={it.event_name} className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" />
+                <div className="absolute inset-0 flex items-center justify-center text-brand-navy/20"><Images size={40} /></div>
+                <img src={`${API}/public/files/${it.photo_id}`} alt={it.event_name} onError={(e) => { e.currentTarget.style.display = "none"; }} className="relative w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" />
                 <div className="absolute inset-0 bg-gradient-to-t from-brand-navy-dark/85 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-3">
                   <div className="text-left text-white">
+                    {it.caption && <p className="text-xs text-white/90 mb-1 line-clamp-2">“{it.caption}”</p>}
                     <p className="font-head font-semibold text-sm leading-tight">{it.event_name}</p>
                     <p className="text-[11px] text-white/80 flex items-center gap-1"><MapPin size={11} /> {it.state || "—"}</p>
                   </div>
@@ -46,6 +48,7 @@ export default function Gallery() {
             </div>
             <div className="p-5">
               <h3 className="font-head font-bold text-xl text-brand-navy">{active.event_name}</h3>
+              {active.caption && <p className="text-brand-magenta font-medium mt-1">“{active.caption}”</p>}
               <div className="flex flex-wrap gap-4 text-sm text-slate-500 mt-1">
                 {active.state && <span className="flex items-center gap-1"><MapPin size={14} /> {active.state}</span>}
                 {active.date && <span className="flex items-center gap-1"><Calendar size={14} /> {new Date(active.date).toLocaleDateString()}</span>}

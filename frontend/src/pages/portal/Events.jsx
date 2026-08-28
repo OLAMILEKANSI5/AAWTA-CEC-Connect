@@ -35,7 +35,9 @@ export default function Events() {
       await api.post(`/events/${reportEvent.id}/report`, {
         actual_attendance: rep.actual_attendance ? Number(rep.actual_attendance) : null,
         outcomes: rep.outcomes, highlights: rep.highlights,
-        photo_file_ids: rep.photos.map((p) => p.id), file_ids: rep.files.map((x) => x.id),
+        photo_file_ids: rep.photos.map((p) => p.id),
+        photo_captions: Object.fromEntries(rep.photos.filter((p) => p.caption).map((p) => [p.id, p.caption])),
+        file_ids: rep.files.map((x) => x.id),
       });
       toast.success("Post-event report submitted"); setReportEvent(null); setRep({ photos: [], files: [] }); load();
     } catch (e) { toast.error(e?.response?.data?.detail || "Failed"); }
@@ -94,7 +96,7 @@ export default function Events() {
                   <a href={gcalUrl(e)} target="_blank" rel="noreferrer" data-testid={`gcal-${e.id}`}><Button size="sm" variant="outline" className="text-brand-navy border-brand-navy/30"><CalendarPlus size={14} className="mr-1" /> Add to Google</Button></a>
                   <a href={`${API}/events/${e.id}/ics`} data-testid={`ics-${e.id}`}><Button size="sm" variant="outline"><Download size={14} className="mr-1" /> .ics</Button></a>
                   {(isStaff || e.submitted_by_id === user?.user_id) && <Button size="sm" onClick={() => setReportEvent(e)} data-testid={`report-event-${e.id}`} className="bg-brand-magenta hover:bg-brand-pink"><Camera size={14} className="mr-1" /> Post-Event Report</Button>}
-                  {(e.reports?.length > 0) && <Button size="sm" variant="outline" onClick={() => openReports(e)} data-testid={`view-reports-${e.id}`}><Image size={14} className="mr-1" /> Reports ({e.reports.length})</Button>}
+                  {(e.reports?.length > 0) && (isStaff || e.public || e.submitted_by_id === user?.user_id) && <Button size="sm" variant="outline" onClick={() => openReports(e)} data-testid={`view-reports-${e.id}`}><Image size={14} className="mr-1" /> Reports ({e.reports.length})</Button>}
                 </div>
               )}
               {isStaff && ["Submitted", "Under Review"].includes(e.status) && (
@@ -117,8 +119,12 @@ export default function Events() {
             <Field label="Highlights" name="highlights" value={rep.highlights} onChange={onR} textarea />
             <div>
               <span className="text-sm text-slate-700">Photos</span>
-              {rep.photos.length > 0 && <div className="flex flex-wrap gap-2 my-2">{rep.photos.map((p) => (
-                <span key={p.id} className="flex items-center gap-1 text-xs bg-slate-100 rounded-full px-2 py-1">{p.filename} <button onClick={() => onR("photos", rep.photos.filter((x) => x.id !== p.id))}><X size={12} /></button></span>
+              {rep.photos.length > 0 && <div className="space-y-2 my-2">{rep.photos.map((p, idx) => (
+                <div key={p.id} className="flex items-center gap-2">
+                  <span className="text-xs text-slate-600 truncate max-w-[110px]" title={p.filename}>{p.filename}</span>
+                  <input value={p.caption || ""} onChange={(e) => onR("photos", rep.photos.map((x) => x.id === p.id ? { ...x, caption: e.target.value } : x))} placeholder="Add a caption…" maxLength={140} data-testid={`photo-caption-${idx}`} className="flex-1 rounded-md border border-input px-2 py-1 text-xs" />
+                  <button onClick={() => onR("photos", rep.photos.filter((x) => x.id !== p.id))}><X size={14} className="text-slate-400 hover:text-rose-500" /></button>
+                </div>
               ))}</div>}
               <UploadButton testid="report-photo-upload" category="event-photo" accept="image/*" label="Add photo" onUploaded={(x) => onR("photos", [...rep.photos, x])} />
             </div>
@@ -145,7 +151,10 @@ export default function Events() {
                 <p className="text-sm mt-1"><b>Outcomes:</b> {r.outcomes}</p>
                 {r.highlights && <p className="text-sm mt-1"><b>Highlights:</b> {r.highlights}</p>}
                 {r.photos?.length > 0 && <div className="grid grid-cols-3 gap-2 mt-2">{r.photos.map((p) => (
-                  <a key={p.id} href={`${API}/files/${p.id}/download`} target="_blank" rel="noreferrer"><img src={`${API}/files/${p.id}/download`} alt="" className="h-20 w-full object-cover rounded-md" /></a>
+                  <a key={p.id} href={`${API}/files/${p.id}/download`} target="_blank" rel="noreferrer" className="block">
+                    <img src={`${API}/files/${p.id}/download`} alt={p.caption || ""} className="h-20 w-full object-cover rounded-md" />
+                    {p.caption && <span className="block text-[10px] text-slate-500 mt-0.5 line-clamp-2">{p.caption}</span>}
+                  </a>
                 ))}</div>}
                 {r.files?.length > 0 && <div className="mt-2 space-y-1">{r.files.map((file) => (
                   <a key={file.id} href={`${API}/files/${file.id}/download`} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-xs text-brand-navy underline"><Download size={12} /> {file.original_filename}</a>

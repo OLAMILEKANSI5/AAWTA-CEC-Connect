@@ -1,0 +1,42 @@
+{
+  "summary": "Round 6 (photo captions) tested end-to-end. Backend: new pytest suite /app/backend/tests/test_round6_captions.py — 8/8 passed (report submit with photo_captions persists, /api/events/evtc/reports attaches caption per photo incl. null for uncaptioned, /api/public/gallery returns caption on every item, /api/public/files 200 image for public-event photos, private-event photo -> 404 and not in gallery, anon blocked from event reports, non-string caption does not 500). Frontend: ambassador report dialog shows a caption input per uploaded photo (photo-caption-0/1, maxlength=140), payload sends photo_captions keyed by file id; public /gallery shows caption in hover overlay (in quotes) and in lightbox in magenta rgb(214,24,155) under the event name on both 1920x800 and 390x800, real uploaded 600x400 image renders (naturalWidth=600) in grid and lightbox, lightbox close works; staff (tok_admin) 'Reports (n)' viewer shows each caption under its photo. Test data cleaned up afterwards.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "n/a (env/seed)", "issue": "Pre-seeded session tok_admin and user u_admin did NOT exist in Mongo (only tok_amb). All tok_admin API/UI calls returned 401 'Invalid session' until I re-inserted the admin user+session. There is no idempotent seed for test sessions, so any DB reset silently breaks staff testing."},
+      {"endpoint": "GET /api/events", "issue": "Returns ALL events (including non-public events of other users) to member roles; ambassador UI listed a staff-created private event and its 'Reports (1)' button (the reports fetch itself is correctly 403). Pre-existing, out of caption scope but worth restricting."},
+      {"endpoint": "POST /api/events/{id}/report", "issue": "photo_captions accepts arbitrary file ids not present in photo_file_ids and captions of unlimited length (UI caps at 140). Non-string caption is coerced by Pydantic to str (200) rather than rejected — no 500, but no server-side validation either."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Gallery (public)", "issue": "Captions did not render at all until the frontend dev server was restarted — the served CRA bundle contained a STALE Gallery module (webpack picked up Events.jsx changes but not Gallery.jsx). Fixed by `supervisorctl restart frontend`; main agent should verify their own changes against a restarted bundle before claiming done.", "selector": "[data-testid=\"gallery-item-0\"]", "priority": "MEDIUM"},
+      {"component": "Gallery / staff report viewer", "issue": "The pre-seeded photo file_0e50c9fdcb75 is a 1x1/invalid placeholder; it renders as a broken image with visible alt text in the public gallery grid, lightbox and staff report dialog. No onError fallback for unloadable images.", "selector": "[data-testid=\"gallery-item-0\"] img", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Public gallery hover overlay", "issues": ["Caption + event name + state stack inside a 3-line overlay on mobile (390px) tiles; long captions are clamped to 2 lines — acceptable but tight."]},
+      {"screen": "Staff report viewer photo grid", "issues": ["Captions render only under captioned photos, so rows with mixed captioned/uncaptioned photos are vertically misaligned."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_round6_captions.py", "/app/test_reports/pytest/round6_captions.xml"],
+  "action_items": [
+    "Add an idempotent startup seed (or documented script) for the tok_admin/u_admin test session — it was missing and broke all staff-token testing.",
+    "Add an image onError fallback (placeholder tile) in Gallery.jsx and the staff report viewer, and/or replace the 1x1 pre-seeded gallery photo with a real image.",
+    "Optional hardening: server-side cap on caption length and ignore photo_captions keys not in photo_file_ids.",
+    "Optional: restrict GET /api/events so members only see public/own events."
+  ],
+  "critical_code_review_comments": [
+    "public_gallery() iterates events then reports in Python; caption lookup is fine but the endpoint is unpaginated — will grow unbounded as reports accumulate.",
+    "Events.jsx (170 lines) is fine size-wise; caption state is stored on the photo object and only non-empty captions are sent — correct, produces caption null server-side.",
+    "get_event_reports mutates the report dicts in place and returns them; harmless here (no _id leaked, projection excludes it)."
+  ],
+  "updated_files": ["/app/backend/tests/test_round6_captions.py"],
+  "success_rate": {"backend": "100% (8/8)", "frontend": "100% after frontend restart (0% for gallery captions on the stale bundle)"},
+  "seed_data_creation": "Re-inserted missing users doc u_admin (admin.test@example.com, super_admin) and user_sessions doc tok_admin (7-day expiry) — required for staff testing. All TEST_ reports on evtc, TEST_ events and TEST_ files were deleted after testing; evtc retains only its original pre-seeded report/caption.",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "cookie/Bearer session_token=tok_amb (ambassador u_amb) and tok_admin (super_admin u_admin, re-seeded by me)",
+  "context_for_next_testing_agent": "Caption feature verified fully (backend + UI, desktop & mobile). Re-run /app/backend/tests/test_round6_captions.py for regression; it self-creates uploads on event evtc and cleans nothing, so delete TEST_ reports afterwards. If tok_admin returns 401, re-seed u_admin/tok_admin in Mongo (users + user_sessions). Gallery item 0 image is an intentionally invalid 1x1 placeholder — expect naturalWidth 0 there.",
+  "rca_of_the_issue": "Gallery captions appeared missing on first UI run: /api/public/gallery returned caption correctly, but the served bundle.js Gallery module still matched the pre-caption source (line numbers 30/31 mapped to event_name/state, no caption node) while Events.jsx changes were present — i.e. CRA/webpack dev-server missed the Gallery.jsx recompile. Restarting the frontend supervisor program recompiled it and all caption UI assertions then passed."
+}

@@ -592,11 +592,13 @@ async def public_gallery():
     items = []
     async for ev in db.events.find({"public": True, "reports": {"$exists": True, "$ne": []}}, {"_id": 0}).sort("date", -1):
         for r in ev.get("reports", []):
+            caps = r.get("photo_captions") or {}
             for pid in r.get("photo_file_ids", []):
                 items.append({
                     "photo_id": pid, "event_id": ev["id"], "event_name": ev.get("name"),
                     "state": ev.get("state"), "date": ev.get("date"),
                     "location": ev.get("location"), "highlights": r.get("highlights"),
+                    "caption": caps.get(pid),
                 })
     return items
 
@@ -915,7 +917,11 @@ async def create_event(payload: EventIn, user=Depends(get_current_user)):
 
 @api_router.get("/events")
 async def list_events(user=Depends(get_current_user)):
-    return await db.events.find({}, {"_id": 0}).sort("date", 1).to_list(1000)
+    if user["role"] in STAFF_ROLES:
+        q = {}
+    else:
+        q = {"$or": [{"public": True}, {"submitted_by_id": user["user_id"]}, {"status": {"$in": ["Approved", "Scheduled", "Completed"]}}]}
+    return await db.events.find(q, {"_id": 0}).sort("date", 1).to_list(1000)
 
 @api_router.put("/events/{event_id}/status")
 async def update_event_status(event_id: str, payload: Dict[str, Any], user=Depends(require_roles(*STAFF_ROLES))):
@@ -933,6 +939,7 @@ class EventReportIn(BaseModel):
     outcomes: str
     highlights: Optional[str] = None
     photo_file_ids: List[str] = []
+    photo_captions: Dict[str, str] = {}
     file_ids: List[str] = []
 
 @api_router.post("/events/{event_id}/report")
@@ -962,6 +969,9 @@ async def get_event_reports(event_id: str, user=Depends(get_current_user)):
     reports = ev.get("reports", [])
     for r in reports:
         r["photos"] = await _files_meta(r.get("photo_file_ids"))
+        caps = r.get("photo_captions") or {}
+        for ph in r["photos"]:
+            ph["caption"] = caps.get(ph["id"])
         r["files"] = await _files_meta(r.get("file_ids"))
     return reports
 
