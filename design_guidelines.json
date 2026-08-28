@@ -1,0 +1,126 @@
+{
+  "theme": "light",
+  "archetype": "Archetype 1: Organic & Earthy combined with Professional High-Contrast",
+  "typography": {
+    "headings": {
+      "fontFamily": "Outfit, sans-serif",
+      "weights": ["400", "700", "900"],
+      "instruction": "DO NOT use Inter or standard fonts for headings. Use Outfit with tracking-tight (-0.02em to -0.04em) for all H1-H3. Use fluid scaling but NEVER exceed text-6xl for Hero H1."
+    },
+    "body": {
+      "fontFamily": "Manrope, sans-serif",
+      "weights": ["400", "500", "600"],
+      "instruction": "Use Manrope for all body text, dashboard data, and labels. Maintain high contrast (text-slate-900)."
+    },
+    "monospaced": {
+      "fontFamily": "JetBrains Mono, monospace",
+      "instruction": "Use strictly for audit logs, numeric data in tables, or transaction IDs."
+    }
+  },
+  "colors": {
+    "background": {
+      "marketing": "#FDFBF7",
+      "dashboard": "#F8FAFC",
+      "surface": "#FFFFFF",
+      "instruction": "Marketing pages should feel grounded and warm (FDFBF7). Dashboard should be crisp and functional (F8FAFC)."
+    },
+    "primary": {
+      "DEFAULT": "#9F1239",
+      "hover": "#E11D48",
+      "foreground": "#FFFFFF",
+      "instruction": "Deep Crimson. Use strictly for primary CTAs like 'Apply Now' and major progressive actions."
+    },
+    "secondary": {
+      "DEFAULT": "#D97706",
+      "hover": "#F59E0B",
+      "foreground": "#FFFFFF",
+      "instruction": "Empowerment Gold. Use for secondary highlights, warning states, and status indicators."
+    },
+    "text": {
+      "heading": "#0F172A",
+      "body": "#334155",
+      "muted": "#64748B",
+      "instruction": "Never use pure black or gray. Always tint with blue (slate series)."
+    },
+    "borders": {
+      "subtle": "rgba(15, 23, 42, 0.1)",
+      "focus": "#9F1239"
+    }
+  },
+  "layouts": {
+    "marketing": {
+      "spacing": "Generous spacing. Use p-8, p-12, p-24.",
+      "grid": "MODE A: The 'Tetris' Grid (Bento style). Use gap-8 or gap-12. Avoid symmetric two-column standard layouts. Use col-span-8 and col-span-4 to create tension.",
+      "header": "Crystal Glassmorphism: backdrop-blur-xl bg-white/80, 1px bottom border-slate-200. Must have 'Apply Now' and 'Member Login' buttons."
+    },
+    "dashboard": {
+      "spacing": "Dense and compact. Use p-4 to p-6 inside cards.",
+      "grid": "MODE B: High Density Grid. grid-cols-4 with gap-4 or gap-6. Left-sidebar for navigation.",
+      "cards": "Cardless or Flat style. bg-white, 1px border-slate-200. NO default soft shadows. Add subtle translate-y-1 and shadow-md ONLY on hover for interactive cards."
+    }
+  },
+  "visual_enhancers": {
+    "borders": "Use 1px solid borders for definition. No muddy drop shadows.",
+    "textures": "Add a very subtle noise/grain overlay (opacity 2-3%) to the marketing hero section to break digital flatness.",
+    "overlays": "Hero images must use bg-black/30 or a gradient overlay for text legibility. NEVER blanket opacity that hides the image.",
+    "hover_states": "All interactive elements MUST explicitly define a lighter hover color AND a text color. Example: hover:bg-slate-900 hover:text-white"
+  },
+  "motion": {
+    "marketing": "Use framer-motion for staggered entrance of Bento grid items. Implement 'lenis' for smooth momentum scrolling.",
+    "dashboard": "Minimalist motion. Limit to micro-interactions (button presses, dropdowns). No heavy page transitions."
+  },
+  "components": {
+    "buttons": "Pill-shaped (rounded-full) for Marketing, slightly rounded (rounded-md) for Dashboard. Always include transition-colors duration-200.",
+    "forms": "Use Shadcn Form components. Inputs must have clear focus rings (focus:ring-2 focus:ring-primary/50).",
+    "charts": "Use Recharts inside Shadcn Chart wrappers. Color palette for charts: #9F1239, #D97706, #0F172A, #94A3B8.",
+    "tables": "Use Shadcn Table. Zebra striping or clear border-b for rows. Left-align data, right-align numbers.",
+    "toasts": "Use Sonner for all notifications, especially post-form submissions (Applications, Member Profile updates)."
+  },
+  "accessibility": {
+    "contrast": "Ensure minimum 4.5:1 ratio for normal text. Use Text-Shadow if placing text over images.",
+    "testing": "CRITICAL: Add data-testid attributes to ALL interactive elements (e.g., data-testid='apply-now-btn', data-testid='login-submit').",
+    "motion": "Respect prefers-reduced-motion via Tailwind variants."
+  },
+  "media": {
+    "hero_image": {
+      "url": "https://images.unsplash.com/photo-1732053892604-05afb799883b?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NzV8MHwxfHNlYXJjaHwzfHx3b21lbiUyMGluJTIwbG9naXN0aWNzJTIwdHJhbnNwb3J0YXRpb258ZW58MHx8fHwxNzg3OTAwNzM1fDA&ixlib=rb-4.1.0&q=85",
+      "description": "Woman sitting in the driver's seat of a red truck - Use for main Marketing Hero background.",
+      "category": "marketing_hero"
+    },
+    "feature_image_1": {
+      "url": "https://images.unsplash.com/photo-1688619101855-396f4f06710e?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NzV8MHwxfHNlYXJjaHwxfHx3b21lbiUyMGluJTIwbG9naXN0aWNzJTIwdHJhbnNwb3J0YXRpb258ZW58MHx8fHwxNzg3OTAwNzM1fDA&ixlib=rb-4.1.0&q=85",
+      "description": "Woman in white truck driver seat - Use for Ambassador Spotlight or About section.",
+      "category": "marketing_spotlight"
+    },
+    "feature_image_2": {
+      "url": "https://images.unsplash.com/photo-1582213782179-e0d53f98f2ca?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDQ2MzR8MHwxfHNlYXJjaHwxfHxjb21tdW5pdHklMjBlbmdhZ2VtZW50JTIwZW1wb3dlcm1lbnR8ZW58MHx8fHwxNzg3OTAwNzM1fDA&ixlib=rb-4.1.0&q=85",
+      "description": "Group stacking hands - Use for Community Impact / Volunteering section.",
+      "category": "marketing_community"
+    },
+    "abstract_logo": {
+      "url": "https://images.unsplash.com/photo-1705988142466-e468bc654eeb?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDQ2NDJ8MHwxfHNlYXJjaHwxfHxjb21wYW55JTIwbG9nbyUyMHdoaXRlJTIwYmFja2dyb3VuZHxlbnwwfHx8fDE3ODc3NjUxNTl8MA&ixlib=rb-4.1.0&q=85",
+      "description": "Abstract colorful shapes (slack-like) - Use as a placeholder for the AAWTA logo in the header and sidebar if needed.",
+      "category": "brand_logo"
+    }
+  },
+  "instructions_to_main_agent": [
+    "Install required fonts: Outfit and Manrope via Google Fonts in index.css.",
+    "Install required icons: 'yarn add lucide-react'.",
+    "Install UI primitives: use Shadcn for all interactive elements (dialogs, select, tables, forms).",
+    "Build the marketing site (Home, About, Volunteer, Apply) in the public routes.",
+    "Build the dashboard (Admin, Ambassador, Volunteer roles) in private/protected routes.",
+    "DO NOT use generic centered text blocks. Use asymmetrical left-aligned blocks with negative space.",
+    "Ensure Header has the required contact info (Power Lab address, Phone: 770 756 6768) and a link to www.aawta.org.",
+    "For the Ambassador Directory, use a dense grid of cards with member profile details.",
+    "For the Dashboard, include dummy data and use Recharts for the Monthly Goals Tracker."
+  ],
+  "UNIVERSAL_GUIDELINES_FOR_MAIN_AGENT": [
+    "You tend to converge toward generic, 'on distribution' outputs. Avoid this.",
+    "DO NOT use dark colors as gradients.",
+    "Don't make generic centered layouts. Create depth through layered design elements.",
+    "You MUST NOT apply universal transition (transition: all). Use specific transitions.",
+    "You MUST NOT center align the app container (.App { text-align: center; }).",
+    "NEVER use AI assistant Emoji characters like 🤖🧠💭💡.",
+    "Use sonner for toasts (located in /app/src/components/ui/sonner.tsx)."
+  ]
+}

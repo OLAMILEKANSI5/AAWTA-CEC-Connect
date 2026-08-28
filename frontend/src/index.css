@@ -1,0 +1,87 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&family=Manrope:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+    margin: 0;
+    font-family: 'Manrope', -apple-system, BlinkMacSystemFont, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+h1, h2, h3, h4, h5, .font-head {
+    font-family: 'Outfit', sans-serif;
+    letter-spacing: -0.02em;
+}
+
+.font-mono-data { font-family: 'JetBrains Mono', monospace; }
+
+@layer base {
+    :root {
+        --background: 0 0% 100%;
+        --foreground: 222 47% 11%;
+        --card: 0 0% 100%;
+        --card-foreground: 222 47% 11%;
+        --popover: 0 0% 100%;
+        --popover-foreground: 222 47% 11%;
+        --primary: 320 80% 47%;
+        --primary-foreground: 0 0% 100%;
+        --secondary: 238 52% 38%;
+        --secondary-foreground: 0 0% 100%;
+        --muted: 240 20% 96%;
+        --muted-foreground: 240 6% 45%;
+        --accent: 320 90% 96%;
+        --accent-foreground: 320 80% 30%;
+        --destructive: 0 84% 60%;
+        --destructive-foreground: 0 0% 98%;
+        --border: 240 15% 90%;
+        --input: 240 15% 90%;
+        --ring: 320 80% 47%;
+        --chart-1: 320 80% 47%;
+        --chart-2: 238 52% 38%;
+        --chart-3: 43 90% 50%;
+        --chart-4: 174 62% 40%;
+        --chart-5: 262 60% 55%;
+        --radius: 0.65rem;
+    }
+    .dark {
+        --background: 238 40% 10%;
+        --foreground: 0 0% 98%;
+        --card: 238 35% 13%;
+        --card-foreground: 0 0% 98%;
+        --popover: 238 35% 13%;
+        --popover-foreground: 0 0% 98%;
+        --primary: 320 80% 55%;
+        --primary-foreground: 0 0% 100%;
+        --secondary: 238 40% 30%;
+        --secondary-foreground: 0 0% 98%;
+        --muted: 238 25% 20%;
+        --muted-foreground: 240 10% 65%;
+        --accent: 238 30% 22%;
+        --accent-foreground: 0 0% 98%;
+        --destructive: 0 62% 45%;
+        --destructive-foreground: 0 0% 98%;
+        --border: 238 25% 22%;
+        --input: 238 25% 22%;
+        --ring: 320 80% 55%;
+    }
+}
+
+@layer base {
+    * { @apply border-border; }
+    body { @apply bg-background text-foreground; }
+}
+
+.grain::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.4'/%3E%3C/svg%3E");
+    opacity: 0.04;
+    pointer-events: none;
+    z-index: 1;
+}
+
+::selection { background: hsl(320 80% 47% / 0.2); }
