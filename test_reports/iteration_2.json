@@ -1,0 +1,49 @@
+{
+  "summary": "Independently verified all 4 round-2 features (cron reminders, watermarked signed-PDF download, event ICS/Google-Calendar links, public Ambassador Directory search) plus the 2 quick regression items. Created /app/backend/tests/test_round2_features.py (21 tests, all passing) and ran 3 Playwright UI flows against the preview URL (public /directory, /portal/documents, /portal/events, notification bell). No functional defects found.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "verified": [
+    "POST /api/cron/reminders: 401 no auth, 401 wrong bearer, 200 {ok:true,run_id} with WEBHOOK_CRON_SECRET, 200 {duplicate:true} on replay of same X-Webhook-Id (single reminder_runs row).",
+    "Fresh-run proof: cleared reminder_sent + type=reminder notifications, triggered cron -> 4 dedupe keys recreated (onboard:mem_amb1:2026-W34, goal:goal1, goaldir:goal1, inact30:user_amb1) and 3 portal notifications for user_amb1 (Onboarding reminder, Goal reminder, We miss you). Zero accounts deactivated (users/members all account_status=active).",
+    "GET /api/signatures/sig1/pdf: owner 200 application/pdf (%PDF-, 2615 bytes, Content-Disposition attachment), staff tok_admin 200, other ambassador 403, anonymous 401, unknown id 404. GET /api/documents as amb returns signed_by_me=true + signature_id=sig1.",
+    "GET /api/events/evt1/ics: 200 text/calendar with BEGIN:VCALENDAR, VERSION:2.0, VEVENT, UID:evt1@cec-connect, DTSTART;VALUE=DATE:20260904, SUMMARY:CEC Career Day; unknown id 404.",
+    "GET /api/public/directory: base returns Amara Bell; state=Georgia&focus=Education -> 1 result Amara Bell; state=Texas -> []; focus=Nonexistent -> []; q=amara -> Amara Bell, q=zzzz -> []; no _id leaked.",
+    "UI /directory: search box, state filter, focus filter, result count and Clear all work (Georgia+Education keeps Amara Bell, zzzz shows 'No ambassadors match' empty state, Clear resets inputs and grid).",
+    "UI /portal/documents (cookie session_token=tok_amb): doc-doc1 card shows enabled 'Signed PDF' button data-testid=download-signed-doc1 -> /api/signatures/sig1/pdf; in-browser credentialed fetch returned 200 application/pdf 2615 bytes.",
+    "UI /portal/events: gcal-evt1 href = calendar.google.com/calendar/render?action=TEMPLATE...dates=20260904/20260905 and ics-evt1 href = /api/events/evt1/ics (fetch 200, text/calendar). Both buttons enabled, no console errors.",
+    "UI notification bell shows badge 3 with the three reminder notifications rendered.",
+    "Regression: GET /api/files/{id}/download anonymous -> 401; PUT /api/goals/goal1 as another member -> 403 and goal title unchanged."
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_round2_features.py",
+    "/app/backend/tests/verify_fresh_reminder_run.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Optional (test-harness only, no app bug): 3 pre-existing tests in /app/backend/tests/backend_test.py fail under pytest-xdist because they depend on state created by tests in other classes/workers (TestApplicationsAdmin::test_detail_notes_status_flow, ::test_convert_to_member 'ambassador submission test must run first') and TestUsersAudit::test_change_user_role indexes an empty user list. Make these tests self-contained (create their own application/user) so the legacy suite is order-independent."
+  ],
+  "critical_code_review_comments": [
+    "server.py is ~1368 lines — consider splitting reminders/signature-pdf/ics into routers/modules (>700-line guideline).",
+    "cron_reminders uses asyncio.create_task(run_reminders()) with no exception logging; wrap run_reminders in try/except + logger.exception so a silent failure in a background reminder run is observable (currently a crash mid-run leaves partial dedupe keys and no trace).",
+    "run_reminders inserts the dedupe key in _remind_once BEFORE sending; if notify/email fails the key still blocks a retry for that bucket. Acceptable for idempotency but worth noting.",
+    "GET /api/events/{id}/ics is unauthenticated and leaks event name/description/location for ANY event id including non-public/Pending ones. Consider restricting to public/Approved events or requiring auth.",
+    "_fmt_ics_date silently falls back to today on parse failure — an invalid stored date would produce a wrong calendar entry rather than an error."
+  ],
+  "updated_files": [
+    "/app/backend/tests/conftest.py (fixed stale ADMIN/MEMBER session tokens -> tok_admin/tok_amb, env-overridable)",
+    "/app/backend/tests/test_round2_features.py (new)",
+    "/app/backend/tests/verify_fresh_reminder_run.py (new one-off verification script)",
+    "/app/frontend/src/pages/public/Directory.jsx (added missing data-testid=\"directory-count\" to the result-count paragraph; required a frontend restart to appear in the served bundle)"
+  ],
+  "success_rate": { "backend": "100% (21/21 round-2 tests)", "frontend": "100% (all 4 UI flows)" },
+  "seed_data_creation": "Temporary TEST_user_other / TEST_tok_other / TEST_mem_other (ambassador) created and deleted by fixture to assert 403 cross-member cases. reminder_sent + type=reminder notifications were cleared and regenerated by the cron run (same 4 keys / 3 notifications as before).",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "tok_admin (super_admin), tok_amb (amb1@example.com / mem_amb1). Browser: cookie session_token=<token> secure+sameSite=None. WEBHOOK_CRON_SECRET from /app/backend/.env.",
+  "context_for_next_testing_agent": "conftest.py now uses tok_admin/tok_amb (previously stale test_session_* tokens, overridable via TEST_ADMIN_TOKEN/TEST_MEMBER_TOKEN). Round-2 features fully covered by tests/test_round2_features.py. Legacy backend_test.py has 3 order-dependent failures under xdist (test design, not app bugs). Note: server clock in this env reads 2026-08-28, so goal1/inact30 reminders fire. Directory filtering is client-side in the UI while the API also supports state/focus/q params (both verified).",
+  "rca_of_the_issue": "No product defects found. The only friction was CRA hot-reload not picking up my added data-testid until 'supervisorctl restart frontend'; after restart directory-count renders ('1 ambassador')."
+}

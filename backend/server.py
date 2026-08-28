@@ -3,7 +3,7 @@ from fastapi.responses import StreamingResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
-import os, logging, uuid, io, csv, json, asyncio
+import os, logging, uuid, io, csv, json, asyncio, hmac
 from pathlib import Path
 from pydantic import BaseModel, Field, EmailStr
 from typing import List, Optional, Any, Dict
@@ -559,8 +559,12 @@ async def set_member_status(member_id: str, payload: Dict[str, Any], user=Depend
 
 # ---------------- public directory & content ----------------
 @api_router.get("/public/directory")
-async def public_directory():
-    members = await db.members.find({"role": "ambassador", "public_profile": True, "account_status": "active"}, {"_id": 0}).to_list(500)
+async def public_directory(state: Optional[str] = None, focus: Optional[str] = None, q: Optional[str] = None):
+    query = {"role": "ambassador", "public_profile": True, "account_status": "active"}
+    if state: query["state"] = state
+    if focus: query["focus_areas"] = focus
+    if q: query["name"] = {"$regex": q, "$options": "i"}
+    members = await db.members.find(query, {"_id": 0}).to_list(500)
     out = []
     for m in members:
         out.append({"id": m["id"], "name": m["name"], "state": m.get("state"), "title": "State Ambassador",
@@ -683,6 +687,7 @@ async def list_documents(user=Depends(get_current_user)):
     for d in docs:
         sig = await db.signatures.find_one({"document_id": d["id"], "user_id": user["user_id"]}, {"_id": 0})
         d["signed_by_me"] = bool(sig)
+        d["signature_id"] = sig["id"] if sig else None
         d["signatures_count"] = await db.signatures.count_documents({"document_id": d["id"]})
     return docs
 
@@ -1112,6 +1117,224 @@ async def get_audit_logs(user=Depends(require_roles("super_admin", "director")),
 @api_router.get("/")
 async def root():
     return {"message": "CEC Connect API"}
+
+# ---------------- signature PDF ----------------
+def _build_signature_pdf(sig: dict, doc: dict) -> bytes:
+    from reportlab.lib.pagesizes import letter
+    from reportlab.lib.units import inch
+    from reportlab.pdfgen import canvas as pdfcanvas
+    buf = io.BytesIO()
+    c = pdfcanvas.Canvas(buf, pagesize=letter)
+    w, h = letter
+    # watermark
+    c.saveState()
+    c.setFont("Helvetica-Bold", 60)
+    c.setFillColorRGB(0.84, 0.09, 0.61, 0.08)
+    c.translate(w / 2, h / 2); c.rotate(35)
+    c.drawCentredString(0, 0, "AAWTA CEC CONNECT")
+    c.restoreState()
+    # header bar
+    c.setFillColorRGB(0.18, 0.19, 0.57); c.rect(0, h - 90, w, 90, fill=1, stroke=0)
+    c.setFillColorRGB(1, 1, 1); c.setFont("Helvetica-Bold", 22)
+    c.drawString(inch, h - 55, "AAWTA CEC Connect")
+    c.setFont("Helvetica", 12); c.drawString(inch, h - 75, "Certificate of Electronic Signature")
+    # body
+    y = h - 140
+    c.setFillColorRGB(0.1, 0.1, 0.1)
+    def line(label, val, gap=26):
+        nonlocal y
+        c.setFont("Helvetica-Bold", 11); c.drawString(inch, y, label)
+        c.setFont("Helvetica", 11); c.drawString(inch + 170, y, str(val or "—"))
+        y -= gap
+    c.setFont("Helvetica-Bold", 15); c.setFillColorRGB(0.18, 0.19, 0.57)
+    c.drawString(inch, y, doc.get("title", "Document")); y -= 34
+    c.setFillColorRGB(0.1, 0.1, 0.1)
+    line("Document Category", doc.get("category"))
+    line("Document Version", sig.get("document_version") or doc.get("version"))
+    line("Description", (doc.get("description") or "")[:70])
+    y -= 6
+    c.setStrokeColorRGB(0.85, 0.85, 0.9); c.line(inch, y, w - inch, y); y -= 26
+    line("Signed by (legal name)", sig.get("legal_name"))
+    line("Signer email", sig.get("signer_email"))
+    line("Consent given", "Yes" if sig.get("consent") else "No")
+    line("Date & time (UTC)", sig.get("signed_at"))
+    line("IP address", sig.get("ip"))
+    line("Signature ID", sig.get("id"))
+    y -= 20
+    c.setFont("Helvetica-Oblique", 9); c.setFillColorRGB(0.4, 0.4, 0.4)
+    c.drawString(inch, y, "This certificate records an electronic signature captured by AAWTA CEC Connect and is tamper-evident.")
+    c.drawString(inch, y - 14, "The original signed record is preserved and cannot be overwritten.")
+    # signature block
+    c.setStrokeColorRGB(0.84, 0.09, 0.61); c.setLineWidth(1.4)
+    c.line(inch, y - 70, inch + 260, y - 70)
+    c.setFont("Helvetica-BoldOblique", 18); c.setFillColorRGB(0.18, 0.19, 0.57)
+    c.drawString(inch, y - 62, sig.get("legal_name") or "")
+    c.setFont("Helvetica", 9); c.setFillColorRGB(0.4, 0.4, 0.4)
+    c.drawString(inch, y - 84, "Authorized electronic signature")
+    c.showPage(); c.save()
+    return buf.getvalue()
+
+@api_router.get("/signatures/{sig_id}/pdf")
+async def signature_pdf(sig_id: str, user=Depends(get_current_user)):
+    sig = await db.signatures.find_one({"id": sig_id}, {"_id": 0})
+    if not sig:
+        raise HTTPException(404, "Signature not found")
+    if user["role"] not in STAFF_ROLES and sig["user_id"] != user["user_id"]:
+        raise HTTPException(403, "Forbidden")
+    doc = await db.documents.find_one({"id": sig["document_id"]}, {"_id": 0}) or {}
+    pdf = await asyncio.to_thread(_build_signature_pdf, sig, doc)
+    fname = f"signed-{(doc.get('title') or 'document').replace(' ', '_')}.pdf"
+    return StreamingResponse(io.BytesIO(pdf), media_type="application/pdf",
+                             headers={"Content-Disposition": f'attachment; filename="{fname}"'})
+
+# ---------------- event calendar (ICS) ----------------
+def _fmt_ics_date(d):
+    try:
+        dt = datetime.fromisoformat(str(d).replace("Z", "+00:00"))
+        return dt.strftime("%Y%m%d")
+    except Exception:
+        return datetime.now(timezone.utc).strftime("%Y%m%d")
+
+@api_router.get("/events/{event_id}/ics")
+async def event_ics(event_id: str):
+    ev = await db.events.find_one({"id": event_id}, {"_id": 0})
+    if not ev:
+        raise HTTPException(404, "Event not found")
+    start = _fmt_ics_date(ev.get("date"))
+    end_dt = datetime.strptime(start, "%Y%m%d") + timedelta(days=1)
+    end = end_dt.strftime("%Y%m%d")
+    def esc(s): return str(s or "").replace(",", "\\,").replace(";", "\\;").replace("\n", "\\n")
+    ics = "\r\n".join([
+        "BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//AAWTA//CEC Connect//EN", "CALSCALE:GREGORIAN",
+        "BEGIN:VEVENT", f"UID:{ev['id']}@cec-connect",
+        f"DTSTAMP:{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}",
+        f"DTSTART;VALUE=DATE:{start}", f"DTEND;VALUE=DATE:{end}",
+        f"SUMMARY:{esc(ev.get('name'))}",
+        f"DESCRIPTION:{esc(ev.get('description'))}",
+        f"LOCATION:{esc(ev.get('location'))}",
+        "END:VEVENT", "END:VCALENDAR",
+    ])
+    return StreamingResponse(io.BytesIO(ics.encode()), media_type="text/calendar",
+                             headers={"Content-Disposition": f'attachment; filename="event.ics"'})
+
+# ---------------- automated reminders (cron-driven) ----------------
+def _days_since(iso_str):
+    try:
+        dt = datetime.fromisoformat(str(iso_str).replace("Z", "+00:00"))
+        if dt.tzinfo is None: dt = dt.replace(tzinfo=timezone.utc)
+        return (datetime.now(timezone.utc) - dt).days
+    except Exception:
+        return None
+
+def _days_until(iso_str):
+    d = _days_since(iso_str)
+    return None if d is None else -d
+
+async def _remind_once(key: str, user_id, title, body, link, email_to=None):
+    """Send a portal notification + optional email at most once per key."""
+    if await db.reminder_sent.find_one({"key": key}):
+        return
+    await db.reminder_sent.insert_one({"key": key, "created_at": now_iso()})
+    if user_id:
+        await notify_user(user_id, title, body, link, "reminder")
+    if email_to:
+        await send_safe(to=email_to, subject=title, title=title, body_html=ep(body))
+
+async def run_reminders():
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    # 1. Onboarding incomplete (weekly bucket)
+    week = datetime.now(timezone.utc).strftime("%Y-W%U")
+    async for m in db.members.find({"account_status": "active", "user_id": {"$ne": None}}, {"_id": 0}):
+        remaining = [o for o in m.get("onboarding", []) if not o.get("done")]
+        if remaining and m.get("user_id"):
+            await _remind_once(f"onboard:{m['id']}:{week}", m["user_id"],
+                               "Onboarding reminder",
+                               f"You still have {len(remaining)} onboarding step(s) to complete. Finish onboarding to get fully activated.",
+                               "/portal/onboarding", m.get("email"))
+    # 2. Document signatures due/overdue
+    async for d in db.documents.find({"requires_signature": True}, {"_id": 0}):
+        du = _days_until(d.get("due_date")) if d.get("due_date") else None
+        if du is None or du > 3:
+            continue
+        assignee_ids = list(d.get("assigned_to", []))
+        role_targets = d.get("assigned_roles", [])
+        members = []
+        if assignee_ids:
+            members += await db.members.find({"id": {"$in": assignee_ids}}, {"_id": 0}).to_list(500)
+        if role_targets:
+            members += await db.members.find({"role": {"$in": role_targets}}, {"_id": 0}).to_list(500)
+        for m in members:
+            if not m.get("user_id"):
+                continue
+            if await db.signatures.find_one({"document_id": d["id"], "user_id": m["user_id"]}, {"_id": 0}):
+                continue
+            state = "overdue" if du < 0 else f"due in {du} day(s)"
+            await _remind_once(f"sign:{d['id']}:{m['id']}:{today}", m["user_id"],
+                               "Signature reminder",
+                               f"Document '{d['title']}' is {state}. Please review and sign it.",
+                               "/portal/documents", m.get("email"))
+    # 3. Goal due dates
+    async for g in db.goals.find({"status": {"$nin": ["Achieved", "Deferred"]}, "due_date": {"$ne": None}}, {"_id": 0}):
+        du = _days_until(g.get("due_date"))
+        if du is None or du > 3:
+            continue
+        m = await db.members.find_one({"id": g.get("member_id")}, {"_id": 0})
+        if not m:
+            continue
+        state = "overdue" if du < 0 else f"due in {du} day(s)"
+        if m.get("user_id"):
+            await _remind_once(f"goal:{g['id']}:{m['id']}:{today}", m["user_id"],
+                               "Goal reminder", f"Your goal '{g['title']}' is {state}.",
+                               "/portal/goals", m.get("email"))
+        # notify assigned director when overdue
+        if du < 0 and g.get("assigned_director"):
+            await _remind_once(f"goaldir:{g['id']}:{today}", None,
+                               "Member goal overdue",
+                               f"Goal '{g['title']}' for {m['name']} is overdue and may need follow-up.",
+                               None, ADMIN_EMAIL)
+    # 4. Inactivity nudges (14 / 30 / 45 / 60 days) — never auto-deactivate
+    async for u in db.users.find({"account_status": "active", "role": {"$in": ["ambassador", "volunteer"]}}, {"_id": 0}):
+        d = _days_since(u.get("last_login"))
+        if d is None:
+            continue
+        if d >= 60:
+            await _remind_once(f"inact60:{u['user_id']}:{today}", None,
+                               "Member inactive 60+ days — review",
+                               f"{u['name']} ({u['email']}) has not logged in for {d} days. Administrative review recommended (no automatic deactivation).",
+                               None, ADMIN_EMAIL)
+        elif d >= 45:
+            await _remind_once(f"inact45:{u['user_id']}:{today}", None,
+                               "Member inactive 45+ days",
+                               f"{u['name']} ({u['email']}) has not logged in for {d} days. Director follow-up suggested.",
+                               None, ADMIN_EMAIL)
+        elif d >= 30:
+            await _remind_once(f"inact30:{u['user_id']}:{today}", u["user_id"],
+                               "We miss you at CEC Connect",
+                               "It's been over 30 days since your last visit. Log in to check your goals, documents, and announcements.",
+                               "/portal", u.get("email"))
+        elif d >= 14:
+            await _remind_once(f"inact14:{u['user_id']}:{today}", u["user_id"],
+                               "Friendly reminder from CEC Connect",
+                               "It's been a couple of weeks — log in to stay on top of your onboarding and activity.",
+                               "/portal", u.get("email"))
+
+@api_router.post("/cron/reminders")
+async def cron_reminders(request: Request, authorization: Optional[str] = Header(None), x_webhook_id: Optional[str] = Header(None)):
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    secret = os.environ.get("WEBHOOK_CRON_SECRET", "")
+    token = authorization.split(" ", 1)[1] if authorization and authorization.startswith("Bearer ") else ""
+    if not secret or not hmac.compare_digest(token, secret):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    run_id = x_webhook_id or body.get("run_id") or new_id("run")
+    if await db.reminder_runs.find_one({"run_id": run_id}):
+        return {"ok": True, "duplicate": True}
+    await db.reminder_runs.insert_one({"run_id": run_id, "created_at": now_iso()})
+    asyncio.create_task(run_reminders())
+    return {"ok": True, "run_id": run_id}
 
 # ---------------- startup ----------------
 @app.on_event("startup")

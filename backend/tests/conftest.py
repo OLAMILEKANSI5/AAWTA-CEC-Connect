@@ -10,8 +10,8 @@ if not base_url:
 BASE_URL = base_url.rstrip("/")
 API = f"{BASE_URL}/api"
 
-ADMIN_TOKEN = "test_session_admin_001"
-MEMBER_TOKEN = "test_session_amb_001"
+ADMIN_TOKEN = os.environ.get("TEST_ADMIN_TOKEN", "tok_admin")
+MEMBER_TOKEN = os.environ.get("TEST_MEMBER_TOKEN", "tok_amb")
 
 
 def _session(token=None):

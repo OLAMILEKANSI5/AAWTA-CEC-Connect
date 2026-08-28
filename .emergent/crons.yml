@@ -1,0 +1,8 @@
+crons:
+  - name: daily-reminders
+    description: "Sends onboarding, document-signature, goal-deadline and 14/30/45/60-day inactivity reminders every morning"
+    cron: "0 13 * * *"
+    endpoint: "{{BASE_URL}}/api/cron/reminders"
+    method: POST
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    enabled: true

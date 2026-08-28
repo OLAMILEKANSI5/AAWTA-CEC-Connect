@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Calendar, Plus, MapPin, ExternalLink } from "lucide-react";
-import { api, useAuth } from "@/auth";
+import { Calendar, Plus, MapPin, ExternalLink, CalendarPlus, Download } from "lucide-react";
+import { api, API, useAuth } from "@/auth";
 import { PageTitle, Loading, EmptyState, StatusBadge } from "@/components/shared";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
@@ -24,6 +24,13 @@ export default function Events() {
 
   const submit = async () => { if (!f.name) { toast.error("Event name required"); return; } try { await api.post("/events", f); toast.success(isStaff ? "Event added" : "Event submitted for review"); setOpen(false); setF({}); load(); } catch { toast.error("Failed"); } };
   const setStatus = async (id, status) => { await api.put(`/events/${id}/status`, { status }); toast.success(status); load(); };
+  const toYmd = (dt) => dt.toISOString().slice(0, 10).replace(/-/g, "");
+  const gcalUrl = (e) => {
+    if (!e.date) return "#";
+    const s = new Date(e.date); const en = new Date(s.getTime() + 86400000);
+    const p = new URLSearchParams({ action: "TEMPLATE", text: e.name || "", details: e.description || "", location: e.location || "", dates: `${toYmd(s)}/${toYmd(en)}` });
+    return `https://calendar.google.com/calendar/render?${p.toString()}`;
+  };
 
   return (
     <div className="space-y-5">
@@ -62,6 +69,12 @@ export default function Events() {
               <p className="text-sm text-slate-500 mt-1">{e.date ? new Date(e.date).toLocaleDateString() : "Date TBA"}</p>
               {e.location && <p className="text-xs text-slate-400 flex items-center gap-1 mt-1"><MapPin size={12} /> {e.location}</p>}
               <p className="text-xs text-slate-400 mt-2">by {e.submitted_by}</p>
+              {["Approved", "Scheduled", "Completed"].includes(e.status) && (
+                <div className="flex flex-wrap gap-2 mt-3">
+                  <a href={gcalUrl(e)} target="_blank" rel="noreferrer" data-testid={`gcal-${e.id}`}><Button size="sm" variant="outline" className="text-brand-navy border-brand-navy/30"><CalendarPlus size={14} className="mr-1" /> Add to Google</Button></a>
+                  <a href={`${API}/events/${e.id}/ics`} data-testid={`ics-${e.id}`}><Button size="sm" variant="outline"><Download size={14} className="mr-1" /> .ics</Button></a>
+                </div>
+              )}
               {isStaff && ["Submitted", "Under Review"].includes(e.status) && (
                 <div className="flex gap-2 mt-3">
                   <Button size="sm" onClick={() => setStatus(e.id, "Approved")} data-testid={`approve-event-${e.id}`} className="bg-emerald-600 hover:bg-emerald-700 flex-1">Approve</Button>

@@ -35,6 +35,13 @@ Full-stack public website + private role-based member portal for the African Ame
 ## Verified
 - 96/96 backend regression tests pass. E2E (public forms, admin + member portal flows) validated. Security fixes re-verified (download auth 401/200, public-file 404, goal IDOR 403, atomic refs).
 
+## Implemented (2026-06, round 2)
+- **Automated reminders**: platform cron (`.emergent/crons.yml` → `POST /api/cron/reminders`, bearer-secured, idempotent, backgrounded) sending onboarding, document-signature, goal-deadline, and 14/30/45/60-day inactivity nudges (portal notifications + emails; never auto-deactivates). Dedupe via `reminder_sent`.
+- **Signed PDF copies**: `GET /api/signatures/{id}/pdf` generates a watermarked certificate PDF (legal name, email, timestamp, IP, version, signature id); owner or staff only. "Signed PDF" download button in Documents.
+- **Calendar sync**: `GET /api/events/{id}/ics` (.ics download) + Add-to-Google-Calendar template links on approved/scheduled events; direct AAWTA calendar link retained.
+- **Directory search**: public directory filter by name, state, and focus area with live count (frontend) + `?state=&focus=&q=` query support (backend).
+- Verified: 21 new backend tests pass + Playwright UI flows; zero defects.
+
 ## Backlog (P1/P2)
 - P1: Google Calendar 2-way sync; document reminder scheduler; inactivity reminders (14/30/45/60 day) via scheduled task; PDF export for reports; announcement read-receipt analytics UI.
 - P2: reply threads/attachments in messages UI; per-focus-area/region message segmentation UI; post-event reports; signed-PDF generation & download of signed copy; CAPTCHA option; database backup automation.

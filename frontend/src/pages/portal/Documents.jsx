@@ -73,7 +73,12 @@ export default function Documents() {
               <div className="flex-1 min-w-[180px]"><p className="font-medium text-slate-800">{d.title} <span className="text-xs text-slate-400">v{d.version}</span></p><p className="text-xs text-slate-400">{d.category}{d.required ? " · Required" : ""}</p></div>
               {isStaff && <span className="text-xs text-slate-500">{d.signatures_count} signed</span>}
               {d.file_id && <a href={`${API}/files/${d.file_id}/download`} target="_blank" rel="noreferrer"><Button variant="outline" size="sm"><Download size={14} className="mr-1" /> View</Button></a>}
-              {d.requires_signature && (d.signed_by_me ? <StatusBadge status="Achieved" /> : <Button size="sm" onClick={() => setSignDoc(d)} data-testid={`sign-${d.id}`} className="bg-brand-navy hover:bg-brand-navy-dark"><PenLine size={14} className="mr-1" /> Sign</Button>)}
+              {d.requires_signature && (d.signed_by_me ? (
+                <div className="flex items-center gap-2">
+                  <StatusBadge status="Achieved" />
+                  <a href={`${API}/signatures/${d.signature_id}/pdf`} target="_blank" rel="noreferrer" data-testid={`download-signed-${d.id}`}><Button variant="outline" size="sm"><Download size={14} className="mr-1" /> Signed PDF</Button></a>
+                </div>
+              ) : <Button size="sm" onClick={() => setSignDoc(d)} data-testid={`sign-${d.id}`} className="bg-brand-navy hover:bg-brand-navy-dark"><PenLine size={14} className="mr-1" /> Sign</Button>)}
             </div>
           ))}
         </div>
