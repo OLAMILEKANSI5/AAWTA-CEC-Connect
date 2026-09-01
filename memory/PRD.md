@@ -58,3 +58,21 @@ Full-stack public website + private role-based member portal for the African Ame
 - P2: Refactor 1600+ line `server.py` into routers (events, auth, applications).
 - Backlog: richer report filters; announcement read-receipt analytics UI.
 - (Optional) Add QR code to badges for scan-based check-in.
+
+## Implemented (2026-06, Phase A — Registration & Confirmation Emails)
+Part of a 7-phase event-management overhaul (A→G). Decisions: paid events use admin-managed `payment_status` (paid/pending/complimentary/refunded/not_applicable) + external ticket URL (no in-app Stripe); Emergent-managed Resend for mail; QR uses random non-PII confirmation number + checkin_token.
+- Registration form (`PublicEventDetail.jsx`): required first/last/email/phone/State-or-Territory dropdown/AAWTA-member Y-N/ticket category; optional business name+website(auto-https)/job/city/zip/dietary/accessibility; two separate NON-preselected opt-ins (newsletter, events). Consents in `consents` (type, granted_at, source, event_id, opted_out_at).
+- Confirmation emails: subject `Registration Confirmed: [Event Name]`; free → immediate; paid → pending notice then final on paid/complimentary (idempotent); waitlist → waitlist notice. Includes name/event/date/start-end time+tz/venue or virtual link/category/confirmation #/QR image/Add-to-Calendar/check-in instructions/AAWTA contact/manage+cancel link.
+- Delivery tracking (`email_log`): sent/failed on send with provider id; `/api/webhooks/resend` maps delivered/opened/bounced/failed/unsubscribed (secret-gated). NOTE: Resend account is Emergent-managed, so live delivery/open events don't auto-populate in preview — only Sent/Failed + webhook receiver verifiable.
+- Admin (`EventManage.jsx`): per-attendee confirmation #, payment dropdown, confirmation status, resend. Endpoints: PUT `/registrations/{id}/payment`, POST `/registrations/{id}/resend-confirmation`, POST `/registrations/{id}/send-confirmation`, GET `/registrations/{id}/emails`.
+- Public manage `/r/{conf}?t={token}` (`ManageRegistration.jsx`): details + QR + cancel (when allow_cancellation). QR `/api/public/qr/{token}.png` (404 for cancelled).
+- New event fields: end_time, timezone, venue_name, venue_address, virtual_link, ticket_categories, allow_cancellation.
+- Verified: iteration_8 = 22/22 backend pytest + 3 frontend flows; post-fix self-test (honeypot alias, cancelled-QR gate, payment no-op history, non-blocking payment send) pass.
+
+## Remaining Phases
+- Phase B: registration management table (columns/search/filters/More Actions), manual + walk-in registration.
+- Phase C: CSV/XLSX import (mapping + dedupe report), bulk export, bulk actions.
+- Phase D: mobile Check-In Center (QR scan, live totals) + complete Badge Center (categories/colors, sizes, print-ready PDF/ZIP, manual badges, event badge/contact config).
+- Phase E: document editing, descriptions in listing, visibility/audience (default Private Draft), send/assign, archive/eligible-delete, actions.
+- Phase F: automatic onboarding assignment by approved profile + approval/welcome notifications.
+- Phase G: role permissions incl. event-scoped Check-In Volunteer assignment (auto-expire) + expanded Audit History; final security review.

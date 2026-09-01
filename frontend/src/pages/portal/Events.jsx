@@ -30,7 +30,7 @@ export default function Events() {
   const load = () => api.get("/events").then((r) => setEvents(r.data)).catch(() => setEvents([]));
   useEffect(() => { load(); api.get("/settings").then((r) => setSettings(r.data)).catch(() => {}); }, []);
 
-  const submit = async () => { if (!f.name) { toast.error("Event name required"); return; } try { await api.post("/events", f); toast.success(isStaff ? "Event added" : "Event submitted for review"); setOpen(false); setF({}); load(); } catch { toast.error("Failed"); } };
+  const submit = async () => { if (!f.name) { toast.error("Event name required"); return; } try { const payload = { ...f, ticket_categories: f.ticket_categories ? f.ticket_categories.split(",").map((s) => s.trim()).filter(Boolean) : [] }; await api.post("/events", payload); toast.success(isStaff ? "Event added" : "Event submitted for review"); setOpen(false); setF({}); load(); } catch { toast.error("Failed"); } };
   const setStatus = async (id, status) => { await api.put(`/events/${id}/status`, { status }); toast.success(status); load(); };
   const publishToggle = async (e) => { await api.put(`/events/${e.id}/publish`, { published: !e.published }); toast.success(e.published ? "Unpublished" : "Published to public calendar"); load(); };
   const archiveEvent = async (id) => { await api.put(`/events/${id}/archive`); toast.success("Archived"); load(); };
@@ -74,6 +74,12 @@ export default function Events() {
                   <Field label="Event type" name="event_type" value={f.event_type} onChange={on} />
                   <Field label="Date" name="date" type="date" value={f.date} onChange={on} />
                   <Field label="Start time" name="start_time" value={f.start_time} onChange={on} />
+                  <Field label="End time" name="end_time" value={f.end_time} onChange={on} />
+                  <Field label="Time zone (e.g. ET)" name="timezone" value={f.timezone} onChange={on} />
+                  <Field label="Venue name" name="venue_name" value={f.venue_name} onChange={on} />
+                  <Field label="Venue address" name="venue_address" value={f.venue_address} onChange={on} />
+                  <Field label="Virtual link" name="virtual_link" value={f.virtual_link} onChange={on} />
+                  <Field label="Ticket categories (comma-separated)" name="ticket_categories" value={f.ticket_categories} onChange={on} />
                   <SelectField label="Category" name="category" value={f.category} onChange={on} options={EVENT_CATEGORIES} />
                   <SelectField label="Format" name="format" value={f.format} onChange={on} options={EVENT_FORMATS} />
                   <Field label="City" name="city" value={f.city} onChange={on} />
@@ -86,6 +92,7 @@ export default function Events() {
                 <Field label="Description" name="description" value={f.description} onChange={on} textarea />
                 <div className="grid grid-cols-2 gap-4">
                   <label className="flex items-center gap-2 text-sm mt-2"><input type="checkbox" data-testid="paid-toggle" checked={!!f.is_paid} onChange={(e) => on("is_paid", e.target.checked)} className="accent-[#D6189B]" /> Paid event</label>
+                  <label className="flex items-center gap-2 text-sm mt-2"><input type="checkbox" data-testid="allow-cancellation" checked={f.allow_cancellation !== false} onChange={(e) => on("allow_cancellation", e.target.checked)} className="accent-[#D6189B]" /> Allow attendees to cancel</label>
                   {f.is_paid && <Field label="Price" name="price" value={f.price} onChange={on} />}
                   <Field label="Registration URL (optional)" name="registration_url" value={f.registration_url} onChange={on} />
                   {f.is_paid && <Field label="Ticket URL (optional)" name="ticket_url" value={f.ticket_url} onChange={on} />}

@@ -2,6 +2,13 @@ export const LOGO_URL = "https://customer-assets-39nsmqrw.emergentagent.net/job_
 
 export const US_STATES = ["Alabama","Alaska","Arizona","Arkansas","California","Colorado","Connecticut","Delaware","Florida","Georgia","Hawaii","Idaho","Illinois","Indiana","Iowa","Kansas","Kentucky","Louisiana","Maine","Maryland","Massachusetts","Michigan","Minnesota","Mississippi","Missouri","Montana","Nebraska","Nevada","New Hampshire","New Jersey","New Mexico","New York","North Carolina","North Dakota","Ohio","Oklahoma","Oregon","Pennsylvania","Rhode Island","South Carolina","South Dakota","Tennessee","Texas","Utah","Vermont","Virginia","Washington","West Virginia","Wisconsin","Wyoming"];
 
+export const US_STATES_TERRITORIES = [...US_STATES, "District of Columbia", "Puerto Rico", "Guam", "U.S. Virgin Islands", "American Samoa", "Northern Mariana Islands"];
+
+export const PAYMENT_STATUSES = ["paid", "pending", "complimentary", "refunded", "not_applicable"];
+export const PAYMENT_LABELS = { paid: "Paid", pending: "Pending", complimentary: "Complimentary", refunded: "Refunded", not_applicable: "N/A" };
+export const PAYMENT_COLORS = { paid: "bg-emerald-100 text-emerald-700", pending: "bg-amber-100 text-amber-700", complimentary: "bg-blue-100 text-blue-700", refunded: "bg-rose-100 text-rose-700", not_applicable: "bg-slate-100 text-slate-600" };
+export const BADGE_CATEGORIES = ["General Attendee","Member","VIP","Speaker","Sponsor","Exhibitor","Partner","Media","Volunteer","Ambassador","Staff","Walk-In"];
+
 export const FOCUS_AREAS = ["Education","Workforce Development","Membership and Community Engagement","Strategic Partnerships","Marketing and Communications","Events and Programs","Youth Development","Wellness and Advocacy","Technology and Innovation","Trucking and Transportation","Entrepreneurship","Reentry and Second-Chance Initiatives","Hospitality","Other"];
 
 export const INQUIRY_TYPES = ["Learn more about the CEC","State Ambassador","Volunteer","Community partnership","Event support","Sponsorship","Presentation request","Other"];

@@ -3,7 +3,7 @@ from fastapi.responses import StreamingResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
-import os, logging, uuid, io, csv, json, asyncio, hmac
+import os, logging, uuid, io, csv, json, asyncio, hmac, re, secrets
 from pathlib import Path
 from pydantic import BaseModel, Field, EmailStr
 from typing import List, Optional, Any, Dict
@@ -11,7 +11,9 @@ from datetime import datetime, timezone, timedelta
 
 import httpx
 import storage as storage_mod
-from emailer import send_safe, p as ep
+from emailer import send_safe, send_email, _wrap, p as ep
+from urllib.parse import urlencode
+from html import escape as hesc
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -22,6 +24,7 @@ db = client[os.environ['DB_NAME']]
 
 ADMIN_EMAIL = os.environ.get('ADMIN_EMAIL', 'aawtassn@gmail.com')
 SUPER_ADMIN_EMAIL = os.environ.get('SUPER_ADMIN_EMAIL', 'aawtassn@gmail.com')
+PUBLIC_BASE_URL = (os.environ.get('PUBLIC_BASE_URL') or '').rstrip('/')
 EMERGENT_AUTH_URL = "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data"
 
 app = FastAPI()
@@ -888,6 +891,158 @@ async def list_ann_requests(user=Depends(get_current_user)):
         return await db.announcement_requests.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
     return await db.announcement_requests.find({"requested_by_id": user["user_id"]}, {"_id": 0}).sort("created_at", -1).to_list(500)
 
+# ---------------- registration & email helpers ----------------
+PAYMENT_STATUSES = ["paid", "pending", "complimentary", "refunded", "not_applicable"]
+BADGE_CATEGORIES = ["General Attendee", "Member", "VIP", "Speaker", "Sponsor", "Exhibitor", "Partner", "Media", "Volunteer", "Ambassador", "Staff", "Walk-In"]
+EMAIL_STATUS_MAP = {"email.sent": "sent", "email.delivered": "delivered", "email.delivery_delayed": "sent",
+                    "email.opened": "opened", "email.clicked": "opened", "email.bounced": "bounced",
+                    "email.complained": "failed", "email.failed": "failed"}
+
+
+def gen_confirmation_number():
+    a = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+    return "CEC-" + "".join(secrets.choice(a) for _ in range(8))
+
+
+def normalize_website(u):
+    if not u:
+        return u
+    u = str(u).strip()
+    if not u:
+        return u
+    if not re.match(r"^https?://", u, re.I):
+        u = "https://" + u
+    return u
+
+
+async def log_and_send(*, to, subject, inner_html, title, template, related_type=None, related_id=None):
+    log_id = new_id("elog"); provider_id = None; status = "failed"; error = None
+    try:
+        provider_id = await send_email(to=to, subject=subject, html=_wrap(title, inner_html))
+        if provider_id:
+            status = "sent"
+        else:
+            error = "Provider did not return a message id"
+    except Exception as e:
+        error = str(e)
+    doc = {"id": log_id, "provider_id": provider_id, "to": to, "subject": subject, "template": template,
+           "related_type": related_type, "related_id": related_id, "status": status, "error": error,
+           "attempts": 1, "sent_at": now_iso() if status == "sent" else None, "delivered_at": None,
+           "opened_at": None, "last_resend_at": None, "created_at": now_iso()}
+    await db.email_log.insert_one(dict(doc))
+    return doc
+
+
+def _gcal_link(e):
+    if not e.get("date"):
+        return None
+    d = str(e["date"]).replace("-", "")
+    params = {"action": "TEMPLATE", "text": e.get("name") or "AAWTA Event", "dates": f"{d}/{d}"}
+    if e.get("description"):
+        params["details"] = str(e["description"])[:500]
+    locv = e.get("venue_address") or e.get("location") or ""
+    if locv:
+        params["location"] = locv
+    return "https://calendar.google.com/calendar/render?" + urlencode(params)
+
+
+def build_registration_email(reg, e, settings, kind):
+    base = PUBLIC_BASE_URL
+    conf = reg["confirmation_number"]; token = reg["checkin_token"]
+    manage = f"{base}/r/{conf}?t={token}"
+    qr = f"{base}/api/public/qr/{token}.png"
+    gcal = _gcal_link(e)
+    fname = hesc(reg.get("first_name") or reg.get("name") or "there")
+
+    def row(label, val):
+        return (f'<tr><td style="padding:5px 14px 5px 0;color:#64748b;font-size:13px;white-space:nowrap;vertical-align:top">{hesc(label)}</td>'
+                f'<td style="padding:5px 0;color:#0f172a;font-size:13px">{val}</td></tr>')
+    rows = row("Confirmation #", f"<strong>{hesc(conf)}</strong>")
+    rows += row("Registration", hesc(reg.get("ticket_category") or "General Admission"))
+    if e.get("date"):
+        rows += row("Date", hesc(e["date"]))
+    tparts = [x for x in [e.get("start_time"), e.get("end_time")] if x]
+    if tparts:
+        tstr = " – ".join(tparts) + (f" {e['timezone']}" if e.get("timezone") else "")
+        rows += row("Time", hesc(tstr))
+    if e.get("format") == "Virtual":
+        vl = normalize_website(e.get("virtual_link"))
+        if vl and vl.startswith("https://"):
+            rows += row("Join link", f'<a href="{hesc(vl)}" style="color:#D6189B">Open virtual event</a>')
+        else:
+            rows += row("Location", "Virtual — link provided before the event")
+    else:
+        if e.get("venue_name"):
+            rows += row("Venue", hesc(e["venue_name"]))
+        addr = e.get("venue_address") or e.get("location") or ", ".join([x for x in [e.get("city"), e.get("state")] if x])
+        if addr:
+            rows += row("Address", hesc(addr))
+    table = f'<table role="presentation" style="border-collapse:collapse;margin:6px 0 14px">{rows}</table>'
+    if kind == "confirmed":
+        subject = f"Registration Confirmed: {e['name']}"
+        title = "You're Registered!"
+        intro = ep(f"Hi {fname}, your registration for <strong>{hesc(e['name'])}</strong> is confirmed. We can't wait to see you!")
+    elif kind == "pending":
+        subject = f"Payment Pending: {e['name']}"
+        title = "Almost There — Payment Pending"
+        intro = ep(f"Hi {fname}, we've received your registration for <strong>{hesc(e['name'])}</strong>. Your spot is confirmed once payment is complete.")
+        tu = normalize_website(e.get("ticket_url"))
+        if tu and tu.startswith("https://"):
+            intro += ep(f'<a href="{hesc(tu)}" style="color:#D6189B">Complete your payment</a>')
+    else:  # waitlist
+        subject = f"You're on the waitlist: {e['name']}"
+        title = "You're on the Waitlist"
+        intro = ep(f"Hi {fname}, <strong>{hesc(e['name'])}</strong> is currently full. You've been added to the waitlist and we'll email you if a spot opens.")
+    qr_block = (f'<div style="text-align:center;margin:14px 0"><img src="{qr}" width="150" height="150" '
+                f'alt="Check-in QR code" style="border:1px solid #eee;border-radius:8px"/><br>'
+                f'<span style="font-size:12px;color:#64748b">Show this QR code at check-in</span></div>')
+    btns = (f'<p style="margin:16px 0"><a href="{manage}" style="background:#D6189B;color:#ffffff;padding:10px 18px;'
+            f'border-radius:999px;text-decoration:none;font-size:14px;font-weight:bold">View or manage your registration</a>')
+    if gcal:
+        btns += f'&nbsp;&nbsp;<a href="{gcal}" style="color:#2E3192;font-size:14px">Add to Calendar</a>'
+    btns += "</p>"
+    ci = ep("<strong>Check-in:</strong> Please arrive 10–15 minutes early and have your QR code (in this email or on your badge) ready for a quick scan at the entrance.")
+    contact = ep(f"Questions? Contact AAWTA at {hesc(settings.get('email') or '')}" + (f" or {hesc(settings.get('phone'))}" if settings.get("phone") else "") + ".")
+    cancel = ep(f'If you can no longer attend, you may cancel from your <a href="{manage}" style="color:#D6189B">registration page</a>.') if e.get("allow_cancellation", True) else ""
+    inner = intro + table + qr_block + btns + ci + contact + cancel
+    return subject, title, inner
+
+
+async def send_registration_confirmation(reg, e, settings, force=False):
+    if reg.get("confirmation_sent") and not force:
+        return None
+    subject, title, inner = build_registration_email(reg, e, settings, "confirmed")
+    log = await log_and_send(to=reg["email"], subject=subject, inner_html=inner, title=title,
+                             template="registration_confirmation", related_type="registration", related_id=reg["id"])
+    await db.event_registrations.update_one({"id": reg["id"]}, {"$set": {
+        "confirmation_sent": True, "confirmation_status": log["status"], "confirmation_sent_at": log.get("sent_at"),
+        "confirmation_error": log.get("error"), "confirmation_email_id": log["id"]}})
+    return log
+
+
+async def send_pending_payment_notice(reg, e, settings):
+    subject, title, inner = build_registration_email(reg, e, settings, "pending")
+    log = await log_and_send(to=reg["email"], subject=subject, inner_html=inner, title=title,
+                             template="pending_payment", related_type="registration", related_id=reg["id"])
+    await db.event_registrations.update_one({"id": reg["id"]}, {"$set": {"pending_notice_sent": True, "confirmation_status": "pending"}})
+    return log
+
+
+async def send_waitlist_notice(reg, e, settings):
+    subject, title, inner = build_registration_email(reg, e, settings, "waitlist")
+    return await log_and_send(to=reg["email"], subject=subject, inner_html=inner, title=title,
+                              template="waitlist", related_type="registration", related_id=reg["id"])
+
+
+async def store_consents(reg, source):
+    for typ, granted in (("newsletter", reg.get("newsletter_opt_in")), ("events", reg.get("events_opt_in"))):
+        if granted:
+            await db.consents.insert_one({"id": new_id("cons"), "reg_id": reg["id"], "email": reg["email"],
+                                          "event_id": reg["event_id"], "type": typ, "granted": True,
+                                          "granted_at": now_iso(), "source": source, "opted_out_at": None,
+                                          "created_at": now_iso()})
+
+
 # ---------------- events ----------------
 class EventIn(BaseModel):
     name: str
@@ -897,7 +1052,12 @@ class EventIn(BaseModel):
     date: Optional[str] = None
     end_date: Optional[str] = None
     start_time: Optional[str] = None
+    end_time: Optional[str] = None
+    timezone: Optional[str] = None
     location: Optional[str] = None
+    venue_name: Optional[str] = None
+    venue_address: Optional[str] = None
+    virtual_link: Optional[str] = None
     city: Optional[str] = None
     state: Optional[str] = None
     audience: Optional[str] = None
@@ -909,6 +1069,8 @@ class EventIn(BaseModel):
     price: Optional[str] = None
     registration_url: Optional[str] = None
     ticket_url: Optional[str] = None
+    ticket_categories: List[str] = []
+    allow_cancellation: bool = True
     image_file_id: Optional[str] = None
     file_ids: List[str] = []
     public: bool = False
@@ -923,6 +1085,8 @@ async def create_event(payload: EventIn, user=Depends(get_current_user)):
     status = "Approved" if user["role"] in STAFF_ROLES else "Submitted"
     ev = {"id": new_id("evt"), **payload.model_dump(), "status": status, "published": False, "archived": False,
           "registration_status": "open", "submitted_by": user["name"], "submitted_by_id": user["user_id"], "created_at": now_iso()}
+    if not ev.get("ticket_categories"): ev["ticket_categories"] = ["General Admission"]
+    ev["virtual_link"] = normalize_website(ev.get("virtual_link"))
     await db.events.insert_one(dict(ev))
     await log_audit(user, "event_submitted", "event", ev["id"])
     if status == "Submitted":
@@ -992,30 +1156,222 @@ async def public_event_detail(event_id: str):
     return e
 
 class RegistrationIn(BaseModel):
-    name: str
+    first_name: str
+    last_name: str
     email: EmailStr
-    phone: Optional[str] = None
+    phone: str
+    state: str
+    is_member: bool
+    ticket_category: str
+    business_name: Optional[str] = None
+    business_website: Optional[str] = None
+    job_title: Optional[str] = None
+    city: Optional[str] = None
+    zip_code: Optional[str] = None
+    dietary: Optional[str] = None
+    accessibility: Optional[str] = None
+    custom_answers: Dict[str, Any] = {}
+    newsletter_opt_in: bool = False
+    events_opt_in: bool = False
     honeypot: Optional[str] = ""
+    company_website: Optional[str] = ""
+
 
 @api_router.post("/public/events/{event_id}/register")
 async def public_register(event_id: str, payload: RegistrationIn):
-    if payload.honeypot: raise HTTPException(400, "Spam detected")
+    if payload.honeypot or payload.company_website:
+        raise HTTPException(400, "Spam detected")
     e = await db.events.find_one(_public_evq({"id": event_id}), {"_id": 0})
-    if not e: raise HTTPException(404, "Event not found")
-    if e.get("registration_status") == "closed": raise HTTPException(400, "Registration is closed for this event")
-    if await db.event_registrations.find_one({"event_id": event_id, "email": payload.email.lower()}):
+    if not e:
+        raise HTTPException(404, "Event not found")
+    if e.get("registration_status") == "closed":
+        raise HTTPException(400, "Registration is closed for this event")
+    email = payload.email.lower()
+    if await db.event_registrations.find_one({"event_id": event_id, "email": email, "status": {"$ne": "cancelled"}}):
         raise HTTPException(400, "You are already registered for this event")
     count = await db.event_registrations.count_documents({"event_id": event_id, "status": {"$in": ["registered", "checked_in", "walkin"]}})
     status = "registered"
-    if e.get("registration_status") == "waitlist" or (e.get("capacity") and count >= e["capacity"]): status = "waitlist"
-    reg = {"id": new_id("reg"), "event_id": event_id, "event_name": e["name"], "name": payload.name, "email": payload.email.lower(),
-           "phone": payload.phone, "status": status, "checked_in": False, "created_at": now_iso()}
+    if e.get("registration_status") == "waitlist" or (e.get("capacity") and count >= e["capacity"]):
+        status = "waitlist"
+    reg = {"id": new_id("reg"), "event_id": event_id, "event_name": e["name"],
+           "first_name": payload.first_name.strip(), "last_name": payload.last_name.strip(),
+           "name": f"{payload.first_name} {payload.last_name}".strip(),
+           "email": email, "phone": payload.phone, "state": payload.state,
+           "is_member": payload.is_member, "ticket_category": payload.ticket_category,
+           "business_name": payload.business_name, "business_website": normalize_website(payload.business_website),
+           "job_title": payload.job_title, "city": payload.city, "zip_code": payload.zip_code,
+           "dietary": payload.dietary, "accessibility": payload.accessibility, "custom_answers": payload.custom_answers,
+           "newsletter_opt_in": payload.newsletter_opt_in, "events_opt_in": payload.events_opt_in,
+           "status": status, "checked_in": False,
+           "confirmation_number": gen_confirmation_number(), "checkin_token": secrets.token_urlsafe(16),
+           "source": "online", "payment_status": ("not_applicable" if not e.get("is_paid") else "pending"),
+           "payment_history": [], "confirmation_sent": False, "resend_count": 0,
+           "badge_category": ("Member" if payload.is_member else "General Attendee"), "created_at": now_iso()}
     await db.event_registrations.insert_one(dict(reg))
-    conf = ep(f"Hi {payload.name},") + ep(f"You are {'on the waitlist for' if status == 'waitlist' else 'registered for'} <strong>{e['name']}</strong>. We look forward to seeing you!")
-    asyncio.create_task(send_safe(to=str(payload.email), subject=f"{'Waitlisted' if status == 'waitlist' else 'Registration confirmed'}: {e['name']}", title="Event Registration", body_html=conf))
+    await store_consents(reg, "online registration")
+    settings = await get_settings_doc()
+    if status == "waitlist":
+        asyncio.create_task(send_waitlist_notice(reg, e, settings))
+    elif not e.get("is_paid"):
+        asyncio.create_task(send_registration_confirmation(reg, e, settings))
+    else:
+        asyncio.create_task(send_pending_payment_notice(reg, e, settings))
     if e.get("submitted_by_id"):
-        await notify_user(e["submitted_by_id"], f"New registration: {e['name']}", f"{payload.name} registered ({status}).", "/portal/events")
-    return {"status": status, "id": reg["id"]}
+        await notify_user(e["submitted_by_id"], f"New registration: {e['name']}", f"{reg['name']} registered ({status}).", "/portal/events")
+    await log_audit(None, "registration_created", "registration", reg["id"], {"event_id": event_id, "source": "online", "status": status})
+    return {"status": status, "id": reg["id"], "confirmation_number": reg["confirmation_number"]}
+
+
+async def _reg_and_authz(reg_id, user):
+    reg = await db.event_registrations.find_one({"id": reg_id}, {"_id": 0})
+    if not reg:
+        raise HTTPException(404, "Registration not found")
+    ev = await db.events.find_one({"id": reg["event_id"]}, {"_id": 0})
+    if user["role"] not in STAFF_ROLES and (not ev or ev.get("submitted_by_id") != user["user_id"]):
+        raise HTTPException(403, "Forbidden")
+    return reg, ev
+
+
+class PaymentUpdate(BaseModel):
+    payment_status: str
+    note: Optional[str] = None
+
+
+@api_router.put("/registrations/{reg_id}/payment")
+async def update_registration_payment(reg_id: str, payload: PaymentUpdate, user=Depends(get_current_user)):
+    reg, ev = await _reg_and_authz(reg_id, user)
+    if payload.payment_status not in PAYMENT_STATUSES:
+        raise HTTPException(400, "Invalid payment status")
+    old = reg.get("payment_status")
+    set_fields = {"payment_status": payload.payment_status, "payment_updated_by": user["name"], "payment_updated_at": now_iso()}
+    upd = {"$set": set_fields}
+    if old != payload.payment_status:
+        entry = {"from": old, "to": payload.payment_status, "by": user["name"], "by_id": user["user_id"], "note": payload.note, "at": now_iso()}
+        upd["$push"] = {"payment_history": entry}
+        await log_audit(user, "payment_status_changed", "registration", reg_id, entry)
+    await db.event_registrations.update_one({"id": reg_id}, upd)
+    reg = await db.event_registrations.find_one({"id": reg_id}, {"_id": 0})
+    settings = await get_settings_doc()
+    if payload.payment_status in ("paid", "complimentary") and not reg.get("confirmation_sent") and reg.get("status") != "waitlist":
+        asyncio.create_task(send_registration_confirmation(reg, ev, settings))
+    elif payload.payment_status == "pending" and not reg.get("pending_notice_sent"):
+        asyncio.create_task(send_pending_payment_notice(reg, ev, settings))
+    return reg
+
+
+@api_router.post("/registrations/{reg_id}/send-confirmation")
+async def send_confirmation_now(reg_id: str, user=Depends(get_current_user)):
+    reg, ev = await _reg_and_authz(reg_id, user)
+    settings = await get_settings_doc()
+    log = await send_registration_confirmation(reg, ev, settings, force=True)
+    await log_audit(user, "confirmation_sent", "registration", reg_id)
+    return {"ok": True, "status": log["status"] if log else "unknown"}
+
+
+@api_router.post("/registrations/{reg_id}/resend-confirmation")
+async def resend_confirmation(reg_id: str, user=Depends(get_current_user)):
+    reg, ev = await _reg_and_authz(reg_id, user)
+    settings = await get_settings_doc()
+    log = await send_registration_confirmation(reg, ev, settings, force=True)
+    await db.event_registrations.update_one({"id": reg_id}, {"$inc": {"resend_count": 1}, "$set": {"last_resend_at": now_iso()}})
+    if log:
+        await db.email_log.update_one({"id": log["id"]}, {"$set": {"last_resend_at": now_iso()}})
+    await log_audit(user, "confirmation_resent", "registration", reg_id, {"status": log["status"] if log else "n/a"})
+    return {"ok": True, "status": log["status"] if log else "unknown"}
+
+
+@api_router.get("/registrations/{reg_id}/emails")
+async def registration_emails(reg_id: str, user=Depends(get_current_user)):
+    await _reg_and_authz(reg_id, user)
+    return await db.email_log.find({"related_type": "registration", "related_id": reg_id}, {"_id": 0}).sort("created_at", -1).to_list(200)
+
+
+@api_router.get("/public/qr/{token}.png")
+async def registration_qr(token: str):
+    reg = await db.event_registrations.find_one({"checkin_token": token}, {"_id": 0})
+    if not reg or reg.get("status") == "cancelled":
+        raise HTTPException(404, "Not found")
+    import qrcode as _qr
+    img = _qr.make(token)
+    buf = io.BytesIO(); img.save(buf, format="PNG"); buf.seek(0)
+    return StreamingResponse(buf, media_type="image/png", headers={"Cache-Control": "public, max-age=86400"})
+
+
+@api_router.get("/public/registrations/{conf}")
+async def public_registration_detail(conf: str, token: str):
+    reg = await db.event_registrations.find_one({"confirmation_number": conf, "checkin_token": token}, {"_id": 0})
+    if not reg:
+        raise HTTPException(404, "Registration not found")
+    e = await db.events.find_one({"id": reg["event_id"]}, {"_id": 0}) or {}
+    return {
+        "registration": {"confirmation_number": reg["confirmation_number"], "name": reg["name"],
+                         "first_name": reg.get("first_name"), "email": reg["email"], "status": reg["status"],
+                         "ticket_category": reg.get("ticket_category"), "payment_status": reg.get("payment_status"),
+                         "checked_in": reg.get("checked_in"), "checkin_token": reg["checkin_token"]},
+        "event": {"id": e.get("id"), "name": e.get("name"), "date": e.get("date"), "start_time": e.get("start_time"),
+                  "end_time": e.get("end_time"), "timezone": e.get("timezone"), "venue_name": e.get("venue_name"),
+                  "venue_address": e.get("venue_address"), "format": e.get("format"),
+                  "virtual_link": e.get("virtual_link") if e.get("format") == "Virtual" else None,
+                  "city": e.get("city"), "state": e.get("state"), "allow_cancellation": e.get("allow_cancellation", True)},
+    }
+
+
+class CancelIn(BaseModel):
+    token: str
+
+
+@api_router.post("/public/registrations/{conf}/cancel")
+async def public_cancel_registration(conf: str, payload: CancelIn):
+    reg = await db.event_registrations.find_one({"confirmation_number": conf, "checkin_token": payload.token}, {"_id": 0})
+    if not reg:
+        raise HTTPException(404, "Registration not found")
+    e = await db.events.find_one({"id": reg["event_id"]}, {"_id": 0}) or {}
+    if not e.get("allow_cancellation", True):
+        raise HTTPException(400, "Cancellation is not permitted for this event")
+    if reg.get("status") == "cancelled":
+        return {"ok": True, "status": "cancelled"}
+    await db.event_registrations.update_one({"id": reg["id"]}, {"$set": {"status": "cancelled", "cancelled_at": now_iso(), "checked_in": False}})
+    await log_audit(None, "registration_cancelled", "registration", reg["id"], {"by": "attendee"})
+    if e.get("submitted_by_id"):
+        await notify_user(e["submitted_by_id"], f"Registration cancelled: {e.get('name')}", f"{reg['name']} cancelled their registration.", "/portal/events")
+    return {"ok": True, "status": "cancelled"}
+
+
+@api_router.post("/webhooks/resend")
+async def resend_webhook(request: Request):
+    secret = os.environ.get("RESEND_WEBHOOK_SECRET", "")
+    if secret:
+        provided = request.headers.get("x-webhook-secret") or request.headers.get("svix-signature") or ""
+        if not hmac.compare_digest(provided, secret):
+            raise HTTPException(401, "Invalid signature")
+    raw = await request.body()
+    try:
+        data = json.loads(raw)
+    except Exception:
+        data = {}
+    etype = data.get("type") or data.get("event")
+    d = data.get("data") or {}
+    if etype in ("contact.unsubscribed", "unsubscribed"):
+        em = (d.get("email") or "").lower()
+        if em:
+            await db.consents.update_many({"email": em, "opted_out_at": None}, {"$set": {"opted_out_at": now_iso()}})
+            await db.email_log.update_many({"to": em}, {"$set": {"status": "unsubscribed"}})
+        return {"ok": True}
+    pid = d.get("email_id") or d.get("id")
+    status = EMAIL_STATUS_MAP.get(etype)
+    if pid and status:
+        upd = {"status": status}
+        if status == "delivered":
+            upd["delivered_at"] = now_iso()
+        if status == "opened":
+            upd["opened_at"] = now_iso()
+        if status in ("bounced", "failed"):
+            upd["error"] = d.get("reason") or d.get("bounce", {}).get("message") or etype
+        await db.email_log.update_one({"provider_id": pid}, {"$set": upd})
+        log = await db.email_log.find_one({"provider_id": pid}, {"_id": 0})
+        if log and log.get("template") == "registration_confirmation" and log.get("related_id"):
+            await db.event_registrations.update_one({"id": log["related_id"]}, {"$set": {"confirmation_status": status}})
+    return {"ok": True}
 
 @api_router.get("/events/{event_id}/registrations")
 async def list_registrations(event_id: str, q: Optional[str] = None, user=Depends(get_current_user)):
