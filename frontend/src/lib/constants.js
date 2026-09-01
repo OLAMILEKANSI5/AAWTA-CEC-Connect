@@ -31,3 +31,23 @@ export const ROLE_LABELS = {
   super_admin: "Super Administrator", director: "Director", administrator: "Administrator",
   ambassador: "State Ambassador", volunteer: "Volunteer",
 };
+
+export const EVENT_CATEGORIES = ["Community Outreach", "Workforce Program", "Workshop", "Networking", "Youth Development", "Training", "Fundraiser", "Conference", "Entrepreneurship", "Other"];
+export const EVENT_FORMATS = ["In-person", "Virtual", "Hybrid"];
+export const EVENT_CAT_COLORS = {
+  "Community Outreach": "bg-brand-magenta/15 text-brand-magenta",
+  "Workforce Program": "bg-blue-100 text-blue-700",
+  "Workshop": "bg-amber-100 text-amber-700",
+  "Networking": "bg-purple-100 text-purple-700",
+  "Youth Development": "bg-emerald-100 text-emerald-700",
+  "Training": "bg-teal-100 text-teal-700",
+  "Fundraiser": "bg-rose-100 text-rose-700",
+  "Conference": "bg-indigo-100 text-indigo-700",
+  "Entrepreneurship": "bg-orange-100 text-orange-700",
+  "Other": "bg-slate-100 text-slate-600",
+};
+export const EVENT_CAT_DOT = {
+  "Community Outreach": "#D6189B", "Workforce Program": "#2563eb", "Workshop": "#d97706",
+  "Networking": "#9333ea", "Youth Development": "#059669", "Training": "#0d9488",
+  "Fundraiser": "#e11d48", "Conference": "#4f46e5", "Entrepreneurship": "#ea580c", "Other": "#64748b",
+};

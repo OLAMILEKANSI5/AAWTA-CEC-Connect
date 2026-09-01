@@ -13,6 +13,7 @@ const NAV = [
   { to: "/programs", label: "Programs & Impact" },
   { to: "/directory", label: "Directory" },
   { to: "/gallery", label: "Gallery" },
+  { to: "/events", label: "Events" },
   { to: "/resources", label: "Resources" },
   { to: "/faq", label: "FAQ" },
   { to: "/contact", label: "Contact" },

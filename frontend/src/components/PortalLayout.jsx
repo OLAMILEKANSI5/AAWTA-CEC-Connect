@@ -22,7 +22,7 @@ const NAV_ITEMS = [
   { to: "/portal/documents", label: "Documents", icon: FileSignature, roles: "all" },
   { to: "/portal/messages", label: "Messages", icon: MessageSquare, roles: "all" },
   { to: "/portal/announcements", label: "Announcements", icon: Megaphone, roles: "all" },
-  { to: "/portal/events", label: "Events & Calendar", icon: Calendar, roles: "all" },
+  { to: "/portal/events", label: "Events | Calendar", icon: Calendar, roles: "all" },
   { to: "/portal/goals", label: "Goals & Activity", icon: Target, roles: "all" },
   { to: "/portal/resources", label: "Resource Center", icon: BookOpen, roles: "all" },
   { to: "/portal/reports", label: "Reports", icon: BarChart3, roles: STAFF },

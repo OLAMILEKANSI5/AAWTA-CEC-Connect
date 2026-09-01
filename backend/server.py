@@ -577,7 +577,7 @@ async def public_home():
     settings = await get_settings_doc()
     spotlights = await db.members.find({"role": "ambassador", "public_profile": True, "account_status": "active"}, {"_id": 0}).limit(4).to_list(4)
     ann = await db.announcements.find({"public": True, "published": True}, {"_id": 0}).sort("created_at", -1).limit(3).to_list(3)
-    events = await db.events.find({"status": {"$in": ["Approved", "Scheduled"]}, "public": True}, {"_id": 0}).sort("date", 1).limit(4).to_list(4)
+    events = await db.events.find(_public_evq({"date": {"$gte": datetime.now(timezone.utc).strftime("%Y-%m-%d")}}), {"_id": 0}).sort("date", 1).limit(6).to_list(6)
     stats = {
         "ambassadors": await db.members.count_documents({"role": "ambassador"}),
         "volunteers": await db.members.count_documents({"role": "volunteer"}),
@@ -892,22 +892,37 @@ async def list_ann_requests(user=Depends(get_current_user)):
 class EventIn(BaseModel):
     name: str
     event_type: Optional[str] = None
+    category: Optional[str] = "Community Outreach"
+    format: Optional[str] = "In-person"
     date: Optional[str] = None
     end_date: Optional[str] = None
+    start_time: Optional[str] = None
     location: Optional[str] = None
+    city: Optional[str] = None
     state: Optional[str] = None
     audience: Optional[str] = None
     description: Optional[str] = None
     requested_support: Optional[str] = None
     estimated_attendance: Optional[int] = None
+    capacity: Optional[int] = None
+    is_paid: bool = False
+    price: Optional[str] = None
+    registration_url: Optional[str] = None
+    ticket_url: Optional[str] = None
+    image_file_id: Optional[str] = None
     file_ids: List[str] = []
     public: bool = False
+
+def _public_evq(extra=None):
+    q = {"status": {"$in": ["Approved", "Scheduled"]}, "published": True, "archived": {"$ne": True}}
+    if extra: q.update(extra)
+    return q
 
 @api_router.post("/events")
 async def create_event(payload: EventIn, user=Depends(get_current_user)):
     status = "Approved" if user["role"] in STAFF_ROLES else "Submitted"
-    ev = {"id": new_id("evt"), **payload.model_dump(), "status": status, "submitted_by": user["name"],
-          "submitted_by_id": user["user_id"], "created_at": now_iso()}
+    ev = {"id": new_id("evt"), **payload.model_dump(), "status": status, "published": False, "archived": False,
+          "registration_status": "open", "submitted_by": user["name"], "submitted_by_id": user["user_id"], "created_at": now_iso()}
     await db.events.insert_one(dict(ev))
     await log_audit(user, "event_submitted", "event", ev["id"])
     if status == "Submitted":
@@ -932,6 +947,116 @@ async def update_event_status(event_id: str, payload: Dict[str, Any], user=Depen
     await log_audit(user, "event_status_change", "event", event_id, {"status": status})
     if ev.get("submitted_by_id"):
         await notify_user(ev["submitted_by_id"], f"Event '{ev['name']}' {status}", "", "/portal/events")
+    return {"ok": True}
+
+@api_router.put("/events/{event_id}/publish")
+async def publish_event(event_id: str, payload: Dict[str, Any], user=Depends(require_roles(*STAFF_ROLES))):
+    published = bool(payload.get("published", True))
+    e = await db.events.find_one({"id": event_id}, {"_id": 0})
+    if not e: raise HTTPException(404, "Not found")
+    upd = {"published": published}
+    if published and e.get("status") not in ("Approved", "Scheduled"): upd["status"] = "Approved"
+    await db.events.update_one({"id": event_id}, {"$set": upd})
+    await log_audit(user, "event_published" if published else "event_unpublished", "event", event_id)
+    if published and e.get("submitted_by_id"):
+        await notify_user(e["submitted_by_id"], f"Your event '{e['name']}' is now live", "Approved and published to the public calendar.", "/portal/events")
+        u = await db.users.find_one({"user_id": e["submitted_by_id"]}, {"_id": 0})
+        if u: asyncio.create_task(send_safe(to=u["email"], subject=f"Your event is live: {e['name']}", title="Event Approved & Published", body_html=ep(f"Great news — your event <strong>{e['name']}</strong> has been approved and published to the public AAWTA CEC Events Calendar.")))
+    return {"ok": True, "published": published}
+
+@api_router.put("/events/{event_id}/archive")
+async def archive_event(event_id: str, user=Depends(require_roles(*STAFF_ROLES))):
+    if not await db.events.find_one({"id": event_id}, {"_id": 0}): raise HTTPException(404, "Not found")
+    await db.events.update_one({"id": event_id}, {"$set": {"archived": True, "published": False}})
+    await log_audit(user, "event_archived", "event", event_id)
+    return {"ok": True}
+
+@api_router.get("/public/events")
+async def public_events(q: Optional[str] = None, category: Optional[str] = None, format: Optional[str] = None, state: Optional[str] = None):
+    query = _public_evq()
+    if category: query["category"] = category
+    if format: query["format"] = format
+    if state: query["state"] = state
+    if q:
+        query["$or"] = [{"name": {"$regex": q, "$options": "i"}}, {"city": {"$regex": q, "$options": "i"}}, {"state": {"$regex": q, "$options": "i"}}, {"description": {"$regex": q, "$options": "i"}}]
+    evs = await db.events.find(query, {"_id": 0}).sort("date", 1).to_list(1000)
+    for e in evs:
+        e["registered_count"] = await db.event_registrations.count_documents({"event_id": e["id"], "status": {"$in": ["registered", "checked_in", "walkin"]}})
+    return evs
+
+@api_router.get("/public/events/{event_id}")
+async def public_event_detail(event_id: str):
+    e = await db.events.find_one(_public_evq({"id": event_id}), {"_id": 0})
+    if not e: raise HTTPException(404, "Event not found")
+    e["registered_count"] = await db.event_registrations.count_documents({"event_id": event_id, "status": {"$in": ["registered", "checked_in", "walkin"]}})
+    return e
+
+class RegistrationIn(BaseModel):
+    name: str
+    email: EmailStr
+    phone: Optional[str] = None
+    honeypot: Optional[str] = ""
+
+@api_router.post("/public/events/{event_id}/register")
+async def public_register(event_id: str, payload: RegistrationIn):
+    if payload.honeypot: raise HTTPException(400, "Spam detected")
+    e = await db.events.find_one(_public_evq({"id": event_id}), {"_id": 0})
+    if not e: raise HTTPException(404, "Event not found")
+    if e.get("registration_status") == "closed": raise HTTPException(400, "Registration is closed for this event")
+    if await db.event_registrations.find_one({"event_id": event_id, "email": payload.email.lower()}):
+        raise HTTPException(400, "You are already registered for this event")
+    count = await db.event_registrations.count_documents({"event_id": event_id, "status": {"$in": ["registered", "checked_in", "walkin"]}})
+    status = "registered"
+    if e.get("registration_status") == "waitlist" or (e.get("capacity") and count >= e["capacity"]): status = "waitlist"
+    reg = {"id": new_id("reg"), "event_id": event_id, "event_name": e["name"], "name": payload.name, "email": payload.email.lower(),
+           "phone": payload.phone, "status": status, "checked_in": False, "created_at": now_iso()}
+    await db.event_registrations.insert_one(dict(reg))
+    conf = ep(f"Hi {payload.name},") + ep(f"You are {'on the waitlist for' if status == 'waitlist' else 'registered for'} <strong>{e['name']}</strong>. We look forward to seeing you!")
+    asyncio.create_task(send_safe(to=str(payload.email), subject=f"{'Waitlisted' if status == 'waitlist' else 'Registration confirmed'}: {e['name']}", title="Event Registration", body_html=conf))
+    if e.get("submitted_by_id"):
+        await notify_user(e["submitted_by_id"], f"New registration: {e['name']}", f"{payload.name} registered ({status}).", "/portal/events")
+    return {"status": status, "id": reg["id"]}
+
+@api_router.get("/events/{event_id}/registrations")
+async def list_registrations(event_id: str, q: Optional[str] = None, user=Depends(get_current_user)):
+    ev = await db.events.find_one({"id": event_id}, {"_id": 0})
+    if not ev: raise HTTPException(404, "Not found")
+    if user["role"] not in STAFF_ROLES and ev.get("submitted_by_id") != user["user_id"]:
+        raise HTTPException(403, "Forbidden")
+    query = {"event_id": event_id}
+    if q: query["$or"] = [{"name": {"$regex": q, "$options": "i"}}, {"email": {"$regex": q, "$options": "i"}}]
+    regs = await db.event_registrations.find(query, {"_id": 0}).sort("created_at", -1).to_list(5000)
+    return {"registrations": regs, "total": len(regs), "checked_in": sum(1 for r in regs if r.get("checked_in"))}
+
+class WalkinIn(BaseModel):
+    name: str
+    email: Optional[str] = None
+
+@api_router.post("/events/{event_id}/registrations")
+async def add_walkin(event_id: str, payload: WalkinIn, user=Depends(get_current_user)):
+    ev = await db.events.find_one({"id": event_id}, {"_id": 0})
+    if not ev: raise HTTPException(404, "Not found")
+    if user["role"] not in STAFF_ROLES and ev.get("submitted_by_id") != user["user_id"]:
+        raise HTTPException(403, "Forbidden")
+    reg = {"id": new_id("reg"), "event_id": event_id, "event_name": ev["name"], "name": payload.name,
+           "email": (payload.email or "").lower(), "status": "walkin", "checked_in": True, "checked_in_at": now_iso(), "created_at": now_iso()}
+    await db.event_registrations.insert_one(dict(reg))
+    await log_audit(user, "walkin_added", "event", event_id)
+    return clean(reg)
+
+@api_router.put("/registrations/{reg_id}/checkin")
+async def checkin_registration(reg_id: str, payload: Dict[str, Any], user=Depends(get_current_user)):
+    reg = await db.event_registrations.find_one({"id": reg_id}, {"_id": 0})
+    if not reg: raise HTTPException(404, "Not found")
+    ev = await db.events.find_one({"id": reg["event_id"]}, {"_id": 0})
+    if user["role"] not in STAFF_ROLES and (not ev or ev.get("submitted_by_id") != user["user_id"]):
+        raise HTTPException(403, "Forbidden")
+    ci = bool(payload.get("checked_in", True))
+    if ci:
+        prev = reg.get("status") if reg.get("status") != "checked_in" else reg.get("prev_status", "registered")
+        await db.event_registrations.update_one({"id": reg_id}, {"$set": {"checked_in": True, "prev_status": prev, "status": "checked_in", "checked_in_at": now_iso()}})
+    else:
+        await db.event_registrations.update_one({"id": reg_id}, {"$set": {"checked_in": False, "status": reg.get("prev_status", "registered"), "checked_in_at": None}})
     return {"ok": True}
 
 class EventReportIn(BaseModel):

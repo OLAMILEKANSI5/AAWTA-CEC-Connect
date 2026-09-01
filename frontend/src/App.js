@@ -16,6 +16,8 @@ import FAQ from "@/pages/public/FAQ";
 import Contact from "@/pages/public/Contact";
 import Directory from "@/pages/public/Directory";
 import Gallery from "@/pages/public/Gallery";
+import PublicEvents from "@/pages/public/PublicEvents";
+import PublicEventDetail from "@/pages/public/PublicEventDetail";
 import Apply from "@/pages/public/Apply";
 import Login from "@/pages/public/Login";
 
@@ -90,6 +92,8 @@ function AppRouter() {
       <Route path="/contact" element={<Contact />} />
       <Route path="/directory" element={<Directory />} />
       <Route path="/gallery" element={<Gallery />} />
+      <Route path="/events" element={<PublicEvents />} />
+      <Route path="/events/:id" element={<PublicEventDetail />} />
       <Route path="/apply" element={<Apply />} />
       <Route path="/login" element={<Login />} />
 

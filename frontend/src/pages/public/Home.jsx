@@ -5,6 +5,7 @@ import { ArrowRight, Truck, Users, MapPin, Calendar, Megaphone, GraduationCap, B
 import { PublicLayout } from "@/components/PublicLayout";
 import { Button } from "@/components/ui/button";
 import { SectionHeading } from "@/components/shared";
+import { EventCard } from "@/components/EventCard";
 import { IMG } from "@/lib/images";
 import { api, API } from "@/auth";
 
@@ -145,14 +146,33 @@ export default function Home() {
           <div>
             <SectionHeading light eyebrow="Save the Date" title="Upcoming Events" />
             <div className="mt-6 space-y-3">
-              {(data.events?.length ? data.events : [{ name: "CEC Ambassador Orientation", date: "", location: "Virtual" }]).map((e, i) => (
-                <div key={i} className="bg-white/5 border border-white/10 rounded-xl p-4 flex gap-3">
+              {data.events?.length === 0 && <p className="text-white/50 text-sm">New AAWTA CEC events are coming soon. Please check back for upcoming community programs, workshops and engagement opportunities.</p>}
+              {(data.events || []).slice(0, 4).map((e, i) => (
+                <div key={i} onClick={() => navigate(`/events/${e.id}`)} className="bg-white/5 border border-white/10 rounded-xl p-4 flex gap-3 cursor-pointer hover:bg-white/10">
                   <Calendar className="text-brand-pink shrink-0" size={20} />
-                  <div><p className="font-semibold text-white">{e.name}</p><p className="text-sm text-white/60">{e.date ? new Date(e.date).toLocaleDateString() : "Date TBA"} · {e.location || "Location TBA"}</p></div>
+                  <div><p className="font-semibold text-white">{e.name}</p><p className="text-sm text-white/60">{e.date ? new Date(e.date).toLocaleDateString() : "Date TBA"} · {e.format === "Virtual" ? "Virtual" : (e.city ? `${e.city}, ${e.state || ""}` : e.location || "Location TBA")}</p></div>
                 </div>
               ))}
             </div>
           </div>
+        </div>
+      </section>
+
+      {/* AAWTA CEC Events Calendar */}
+      <section className="max-w-7xl mx-auto px-4 py-20" data-testid="home-calendar-section">
+        <SectionHeading center eyebrow="What's Happening" title="AAWTA CEC Events Calendar" subtitle="Discover upcoming AAWTA community events, ambassador activities, workforce programs, workshops and networking opportunities. Select an event to learn more, register or purchase tickets." />
+        <div className="mt-10">
+          {data.events?.length ? (
+            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
+              {data.events.slice(0, 6).map((e) => <EventCard key={e.id} e={e} onOpen={(ev) => navigate(`/events/${ev.id}`)} />)}
+            </div>
+          ) : (
+            <div className="text-center py-14 border border-dashed border-slate-200 rounded-2xl bg-white" data-testid="home-events-empty">
+              <Calendar className="mx-auto text-brand-magenta mb-3" size={36} />
+              <p className="text-slate-600 max-w-md mx-auto">New AAWTA CEC events are coming soon. Please check back for upcoming community programs, workshops and engagement opportunities.</p>
+            </div>
+          )}
+          <div className="text-center mt-8"><Button onClick={() => navigate("/events")} data-testid="view-full-calendar-btn" className="rounded-full bg-brand-navy hover:bg-brand-navy-dark h-12 px-7">View Full Calendar <ArrowRight size={18} className="ml-1" /></Button></div>
         </div>
       </section>
 
