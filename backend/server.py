@@ -973,7 +973,7 @@ async def archive_event(event_id: str, user=Depends(require_roles(*STAFF_ROLES))
 
 @api_router.get("/public/events")
 async def public_events(q: Optional[str] = None, category: Optional[str] = None, format: Optional[str] = None, state: Optional[str] = None):
-    query = _public_evq()
+    query = _public_evq({"date": {"$gte": datetime.now(timezone.utc).strftime("%Y-%m-%d")}})
     if category: query["category"] = category
     if format: query["format"] = format
     if state: query["state"] = state

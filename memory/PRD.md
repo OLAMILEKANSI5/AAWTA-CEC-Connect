@@ -46,7 +46,15 @@ Full-stack public website + private role-based member portal for the African Ame
 - P1: Google Calendar 2-way sync; document reminder scheduler; inactivity reminders (14/30/45/60 day) via scheduled task; PDF export for reports; announcement read-receipt analytics UI.
 - P2: reply threads/attachments in messages UI; per-focus-area/region message segmentation UI; post-event reports; signed-PDF generation & download of signed copy; CAPTCHA option; database backup automation.
 
+## Implemented (2026-06, round 8)
+- **Public events past-event hygiene**: `GET /api/public/events` now excludes events with `date < today` (homepage already filtered). Detail/register links for recently-past events still resolve.
+- **UTC off-by-one fix**: `PublicEvents.jsx` (calendar `byDay` + `upcoming`) and `portal/Events.jsx` card date now parse `date + "T00:00"` (local) — no more previous-day display for negative-UTC users. EventCard/PublicEventDetail were already fixed.
+- **Search debounce**: `/events` public search debounced 300ms (no per-keystroke request storm).
+- **Badge Center (P0, Msg 282)**: new `components/BadgeCenter.jsx` used in `EventManage.jsx` badges tab. Live scaled preview, preset sizes (4×6, 3×4, 2.5×3.5, 4×3) + custom W×H inches, manual badge entry (name + role), select/print-all/print-selected/per-attendee print, on-brand badge (navy header bar, magenta footer, AAWTA CEC, attendee name, role pill, event name + date + city). Client-side print-window rendering with @page sizing.
+- Verified: backend curl (past-event exclusion, registered_count, registrations counts) + UI smoke of Badge Center preview & controls.
+
 ## Next Tasks
-- Wire scheduled reminders (crons) for deadlines & inactivity.
-- Add PDF export + richer report filters.
-- Signed-document PDF artifact generation.
+- P1: Decide direct Google Calendar API 2-way sync vs current `.ics` downloads (user originally wanted official AAWTA calendar sync).
+- P2: Refactor 1600+ line `server.py` into routers (events, auth, applications).
+- Backlog: richer report filters; announcement read-receipt analytics UI.
+- (Optional) Add QR code to badges for scan-based check-in.

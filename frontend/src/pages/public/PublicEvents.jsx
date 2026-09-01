@@ -20,20 +20,21 @@ export default function PublicEvents() {
   const [year, setYear] = useState(now.getFullYear());
   const [q, setQ] = useState(""); const [cat, setCat] = useState(""); const [fmt, setFmt] = useState(""); const [st, setSt] = useState("");
 
+  const localDate = (s) => new Date(s + "T00:00");
   const load = () => {
     const p = new URLSearchParams();
     if (q) p.set("q", q); if (cat) p.set("category", cat); if (fmt) p.set("format", fmt); if (st) p.set("state", st);
     api.get(`/public/events?${p}`).then((r) => setEvents(r.data)).catch(() => setEvents([]));
   };
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [q, cat, fmt, st]);
+  useEffect(() => { const t = setTimeout(load, 300); return () => clearTimeout(t); /* eslint-disable-next-line */ }, [q, cat, fmt, st]);
 
   const byDay = useMemo(() => {
     const m = {};
-    (events || []).forEach((e) => { if (!e.date) return; const d = new Date(e.date); if (d.getMonth() === month && d.getFullYear() === year) { const k = d.getDate(); (m[k] = m[k] || []).push(e); } });
+    (events || []).forEach((e) => { if (!e.date) return; const d = localDate(e.date); if (d.getMonth() === month && d.getFullYear() === year) { const k = d.getDate(); (m[k] = m[k] || []).push(e); } });
     return m;
   }, [events, month, year]);
 
-  const upcoming = (events || []).filter((e) => e.date && new Date(e.date) >= new Date(now.toDateString())).slice(0, 6);
+  const upcoming = (events || []).filter((e) => e.date && localDate(e.date) >= new Date(now.toDateString())).slice(0, 6);
   const first = new Date(year, month, 1).getDay();
   const days = new Date(year, month + 1, 0).getDate();
   const prev = () => { if (month === 0) { setMonth(11); setYear(year - 1); } else setMonth(month - 1); };

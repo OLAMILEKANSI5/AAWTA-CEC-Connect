@@ -122,7 +122,7 @@ export default function Events() {
             <div key={e.id} className="bg-white border border-slate-200 rounded-xl p-5" data-testid={`event-${e.id}`}>
               <div className="flex items-start justify-between"><div className="h-10 w-10 rounded-lg bg-brand-magenta/10 text-brand-magenta flex items-center justify-center"><Calendar size={18} /></div><div className="flex flex-col items-end gap-1"><StatusBadge status={e.status} />{e.published && <span className="text-[10px] font-semibold text-emerald-600">● Published</span>}{e.archived && <span className="text-[10px] font-semibold text-slate-400">Archived</span>}</div></div>
               <p className="font-head font-semibold text-brand-navy mt-3">{e.name}</p>
-              <p className="text-sm text-slate-500 mt-1">{e.date ? new Date(e.date).toLocaleDateString() : "Date TBA"}{e.category ? ` · ${e.category}` : ""}</p>
+              <p className="text-sm text-slate-500 mt-1">{e.date ? new Date(e.date + "T00:00").toLocaleDateString() : "Date TBA"}{e.category ? ` · ${e.category}` : ""}</p>
               {(e.city || e.location) && <p className="text-xs text-slate-400 flex items-center gap-1 mt-1"><MapPin size={12} /> {e.format === "Virtual" ? "Virtual" : (e.city ? `${e.city}, ${e.state || ""}` : e.location)}</p>}
               <p className="text-xs text-slate-400 mt-2">by {e.submitted_by}</p>
               {isStaff && ["Approved", "Scheduled", "Completed"].includes(e.status) && !e.archived && (
