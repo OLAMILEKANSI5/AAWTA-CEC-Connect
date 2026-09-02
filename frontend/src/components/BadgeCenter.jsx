@@ -47,6 +47,16 @@ const badgeCss = (w, h) => `
   .dt { color:#64748b; font-size:${0.06 * w}in; }
   .footfoot { height:${0.06 * h}in; background:#D6189B; flex-shrink:0; }`;
 
+export const printBadges = (regs, event, { w = 4, h = 6 } = {}) => {
+  const list = Array.isArray(regs) ? regs : [regs];
+  const html = `<html><head><title>${event.name} — Badges</title><style>${badgeCss(w, h)}</style></head><body>${list.map((r) => badgeMarkup(r, event, w, h)).join("")}</body></html>`;
+  const win = window.open("", "_blank");
+  if (!win) { toast.error("Popup blocked — allow popups to print badges"); return false; }
+  win.document.write(html); win.document.close(); win.focus();
+  setTimeout(() => win.print(), 400);
+  return true;
+};
+
 export const BadgeCenter = ({ event, registrations }) => {
   const [sizeKey, setSizeKey] = useState("4x6");
   const [cw, setCw] = useState(4);

@@ -1374,19 +1374,111 @@ async def resend_webhook(request: Request):
     return {"ok": True}
 
 @api_router.get("/events/{event_id}/registrations")
-async def list_registrations(event_id: str, q: Optional[str] = None, user=Depends(get_current_user)):
+async def list_registrations(event_id: str, q: Optional[str] = None, state: Optional[str] = None,
+                             member: Optional[str] = None, business: Optional[str] = None, category: Optional[str] = None,
+                             source: Optional[str] = None, payment: Optional[str] = None, confirmation: Optional[str] = None,
+                             checkin: Optional[str] = None, badge: Optional[str] = None, include_archived: bool = False,
+                             user=Depends(get_current_user)):
     ev = await db.events.find_one({"id": event_id}, {"_id": 0})
     if not ev: raise HTTPException(404, "Not found")
     if user["role"] not in STAFF_ROLES and ev.get("submitted_by_id") != user["user_id"]:
         raise HTTPException(403, "Forbidden")
     query = {"event_id": event_id}
-    if q: query["$or"] = [{"name": {"$regex": q, "$options": "i"}}, {"email": {"$regex": q, "$options": "i"}}]
+    if not include_archived:
+        query["archived"] = {"$ne": True}
+    if q:
+        qe = re.escape(q)
+        query["$or"] = [{"name": {"$regex": qe, "$options": "i"}}, {"email": {"$regex": qe, "$options": "i"}},
+                        {"phone": {"$regex": qe, "$options": "i"}}, {"business_name": {"$regex": qe, "$options": "i"}},
+                        {"confirmation_number": {"$regex": qe, "$options": "i"}}]
+    if state: query["state"] = state
+    if member in ("yes", "no"): query["is_member"] = (member == "yes")
+    if business: query["business_name"] = {"$regex": re.escape(business), "$options": "i"}
+    if category: query["ticket_category"] = category
+    if source: query["source"] = source
+    if payment: query["payment_status"] = payment
+    if confirmation == "not_sent":
+        query["confirmation_sent"] = {"$ne": True}
+    elif confirmation:
+        query["confirmation_status"] = confirmation
+    if checkin == "in": query["checked_in"] = True
+    elif checkin == "out": query["checked_in"] = {"$ne": True}
+    if badge: query["badge_status"] = badge
     regs = await db.event_registrations.find(query, {"_id": 0}).sort("created_at", -1).to_list(5000)
-    return {"registrations": regs, "total": len(regs), "checked_in": sum(1 for r in regs if r.get("checked_in"))}
+    all_active = await db.event_registrations.count_documents({"event_id": event_id, "archived": {"$ne": True}, "status": {"$ne": "cancelled"}})
+    return {"registrations": regs, "total": all_active, "filtered": len(regs),
+            "checked_in": await db.event_registrations.count_documents({"event_id": event_id, "checked_in": True})}
+
+
+class ManualRegistrationIn(BaseModel):
+    first_name: str
+    last_name: str
+    email: Optional[EmailStr] = None
+    phone: Optional[str] = None
+    state: Optional[str] = None
+    city: Optional[str] = None
+    zip_code: Optional[str] = None
+    member_status: Optional[str] = "Unknown"
+    business_name: Optional[str] = None
+    business_website: Optional[str] = None
+    job_title: Optional[str] = None
+    ticket_category: str = "General Admission"
+    payment_status: str = "not_applicable"
+    complimentary: bool = False
+    newsletter_opt_in: bool = False
+    events_opt_in: bool = False
+    internal_notes: Optional[str] = None
+    badge_category: Optional[str] = None
+    checked_in: bool = False
+
+
+@api_router.post("/events/{event_id}/manual-registration")
+async def add_manual_registration(event_id: str, payload: ManualRegistrationIn, user=Depends(get_current_user)):
+    ev = await db.events.find_one({"id": event_id}, {"_id": 0})
+    if not ev: raise HTTPException(404, "Not found")
+    if user["role"] not in STAFF_ROLES and ev.get("submitted_by_id") != user["user_id"]:
+        raise HTTPException(403, "Forbidden")
+    is_member = payload.member_status == "Yes"
+    pay = "complimentary" if payload.complimentary else payload.payment_status
+    if pay not in PAYMENT_STATUSES:
+        raise HTTPException(400, "Invalid payment status")
+    reg = {"id": new_id("reg"), "event_id": event_id, "event_name": ev["name"],
+           "first_name": payload.first_name.strip(), "last_name": payload.last_name.strip(),
+           "name": f"{payload.first_name} {payload.last_name}".strip(),
+           "email": (payload.email or "").lower(), "phone": payload.phone, "state": payload.state,
+           "city": payload.city, "zip_code": payload.zip_code, "member_status": payload.member_status, "is_member": is_member,
+           "business_name": payload.business_name, "business_website": normalize_website(payload.business_website),
+           "job_title": payload.job_title, "ticket_category": payload.ticket_category,
+           "newsletter_opt_in": payload.newsletter_opt_in, "events_opt_in": payload.events_opt_in,
+           "internal_notes": payload.internal_notes,
+           "status": ("checked_in" if payload.checked_in else "registered"), "checked_in": payload.checked_in,
+           "checked_in_at": now_iso() if payload.checked_in else None,
+           "checkin_method": "manual" if payload.checked_in else None,
+           "confirmation_number": gen_confirmation_number(), "checkin_token": secrets.token_urlsafe(16),
+           "source": "Manual Entry", "payment_status": pay, "payment_history": [], "confirmation_sent": False, "resend_count": 0,
+           "badge_category": payload.badge_category or ("Member" if is_member else "General Attendee"),
+           "created_by": user["name"], "created_by_id": user["user_id"], "updated_by": user["name"],
+           "created_at": now_iso(), "updated_at": now_iso()}
+    await db.event_registrations.insert_one(dict(reg))
+    await store_consents(reg, "Manual Entry")
+    await log_audit(user, "registration_created", "registration", reg["id"], {"event_id": event_id, "source": "Manual Entry"})
+    return await db.event_registrations.find_one({"id": reg["id"]}, {"_id": 0})
+
 
 class WalkinIn(BaseModel):
-    name: str
+    first_name: str
+    last_name: Optional[str] = ""
+    name: Optional[str] = None
     email: Optional[str] = None
+    phone: Optional[str] = None
+    state: Optional[str] = None
+    member_status: Optional[str] = "Unknown"
+    business_name: Optional[str] = None
+    business_website: Optional[str] = None
+    job_title: Optional[str] = None
+    ticket_category: Optional[str] = "General Admission"
+    badge_category: Optional[str] = None
+
 
 @api_router.post("/events/{event_id}/registrations")
 async def add_walkin(event_id: str, payload: WalkinIn, user=Depends(get_current_user)):
@@ -1394,11 +1486,101 @@ async def add_walkin(event_id: str, payload: WalkinIn, user=Depends(get_current_
     if not ev: raise HTTPException(404, "Not found")
     if user["role"] not in STAFF_ROLES and ev.get("submitted_by_id") != user["user_id"]:
         raise HTTPException(403, "Forbidden")
-    reg = {"id": new_id("reg"), "event_id": event_id, "event_name": ev["name"], "name": payload.name,
-           "email": (payload.email or "").lower(), "status": "walkin", "checked_in": True, "checked_in_at": now_iso(), "created_at": now_iso()}
+    name = payload.name or f"{payload.first_name} {payload.last_name or ''}".strip()
+    if not name.strip():
+        raise HTTPException(400, "Name required")
+    if not (payload.email or payload.phone):
+        raise HTTPException(400, "Email or phone required")
+    is_member = payload.member_status == "Yes"
+    reg = {"id": new_id("reg"), "event_id": event_id, "event_name": ev["name"],
+           "first_name": payload.first_name.strip(), "last_name": (payload.last_name or "").strip(), "name": name,
+           "email": (payload.email or "").lower(), "phone": payload.phone, "state": payload.state,
+           "member_status": payload.member_status, "is_member": is_member,
+           "business_name": payload.business_name, "business_website": normalize_website(payload.business_website),
+           "job_title": payload.job_title, "ticket_category": payload.ticket_category or "General Admission",
+           "status": "checked_in", "prev_status": "walkin", "checked_in": True, "checked_in_at": now_iso(),
+           "checkin_method": "walkin", "checked_in_by": user["name"],
+           "confirmation_number": gen_confirmation_number(), "checkin_token": secrets.token_urlsafe(16),
+           "source": "Walk-In", "payment_status": "not_applicable", "payment_history": [], "confirmation_sent": False, "resend_count": 0,
+           "badge_category": payload.badge_category or (payload.ticket_category if payload.ticket_category in BADGE_CATEGORIES else ("Member" if is_member else "Walk-In")),
+           "created_by": user["name"], "created_by_id": user["user_id"], "created_at": now_iso(), "updated_at": now_iso()}
     await db.event_registrations.insert_one(dict(reg))
-    await log_audit(user, "walkin_added", "event", event_id)
-    return clean(reg)
+    await log_audit(user, "walkin_added", "registration", reg["id"], {"event_id": event_id})
+    return await db.event_registrations.find_one({"id": reg["id"]}, {"_id": 0})
+
+
+class RegEditIn(BaseModel):
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    email: Optional[EmailStr] = None
+    phone: Optional[str] = None
+    state: Optional[str] = None
+    city: Optional[str] = None
+    zip_code: Optional[str] = None
+    is_member: Optional[bool] = None
+    business_name: Optional[str] = None
+    business_website: Optional[str] = None
+    job_title: Optional[str] = None
+    ticket_category: Optional[str] = None
+    badge_category: Optional[str] = None
+    dietary: Optional[str] = None
+    accessibility: Optional[str] = None
+    internal_notes: Optional[str] = None
+
+
+@api_router.put("/registrations/{reg_id}")
+async def edit_registration(reg_id: str, payload: RegEditIn, user=Depends(get_current_user)):
+    reg, ev = await _reg_and_authz(reg_id, user)
+    changes = {}
+    data = payload.model_dump(exclude_unset=True)
+    if "business_website" in data:
+        data["business_website"] = normalize_website(data["business_website"])
+    for k, v in data.items():
+        if reg.get(k) != v:
+            changes[k] = {"from": reg.get(k), "to": v}
+    if not changes:
+        return reg
+    upd = dict(data)
+    if "first_name" in data or "last_name" in data:
+        fn = data.get("first_name") if data.get("first_name") is not None else reg.get("first_name", "")
+        ln = data.get("last_name") if data.get("last_name") is not None else reg.get("last_name", "")
+        upd["name"] = f"{fn or ''} {ln or ''}".strip()
+    upd["updated_by"] = user["name"]; upd["updated_at"] = now_iso()
+    await db.event_registrations.update_one({"id": reg_id}, {"$set": upd})
+    await log_audit(user, "registration_updated", "registration", reg_id, {"changes": changes})
+    return await db.event_registrations.find_one({"id": reg_id}, {"_id": 0})
+
+
+@api_router.post("/registrations/{reg_id}/cancel")
+async def staff_cancel_registration(reg_id: str, user=Depends(get_current_user)):
+    reg, ev = await _reg_and_authz(reg_id, user)
+    await db.event_registrations.update_one({"id": reg_id}, {"$set": {"status": "cancelled", "cancelled_at": now_iso(), "checked_in": False}})
+    await log_audit(user, "registration_cancelled", "registration", reg_id, {"by": "staff"})
+    return await db.event_registrations.find_one({"id": reg_id}, {"_id": 0})
+
+
+@api_router.put("/registrations/{reg_id}/archive")
+async def archive_registration(reg_id: str, payload: Dict[str, Any], user=Depends(get_current_user)):
+    reg, ev = await _reg_and_authz(reg_id, user)
+    val = bool(payload.get("archived", True))
+    await db.event_registrations.update_one({"id": reg_id}, {"$set": {"archived": val}})
+    await log_audit(user, "registration_archived" if val else "registration_unarchived", "registration", reg_id)
+    return await db.event_registrations.find_one({"id": reg_id}, {"_id": 0})
+
+
+@api_router.post("/registrations/{reg_id}/badge-printed")
+async def mark_badge_printed(reg_id: str, user=Depends(get_current_user)):
+    reg, ev = await _reg_and_authz(reg_id, user)
+    await db.event_registrations.update_one({"id": reg_id}, {"$set": {"badge_status": "printed", "badge_printed_at": now_iso()}, "$inc": {"badge_print_count": 1}})
+    await log_audit(user, "badge_printed", "registration", reg_id)
+    return {"ok": True}
+
+
+@api_router.get("/registrations/{reg_id}/history")
+async def registration_history(reg_id: str, user=Depends(get_current_user)):
+    await _reg_and_authz(reg_id, user)
+    return await db.audit_logs.find({"related_type": "registration", "related_id": reg_id}, {"_id": 0}).sort("created_at", -1).to_list(500)
+
 
 @api_router.put("/registrations/{reg_id}/checkin")
 async def checkin_registration(reg_id: str, payload: Dict[str, Any], user=Depends(get_current_user)):
@@ -1410,9 +1592,11 @@ async def checkin_registration(reg_id: str, payload: Dict[str, Any], user=Depend
     ci = bool(payload.get("checked_in", True))
     if ci:
         prev = reg.get("status") if reg.get("status") != "checked_in" else reg.get("prev_status", "registered")
-        await db.event_registrations.update_one({"id": reg_id}, {"$set": {"checked_in": True, "prev_status": prev, "status": "checked_in", "checked_in_at": now_iso()}})
+        await db.event_registrations.update_one({"id": reg_id}, {"$set": {"checked_in": True, "prev_status": prev, "status": "checked_in", "checked_in_at": now_iso(), "checkin_method": payload.get("method", "manual"), "checked_in_by": user["name"]}})
+        await log_audit(user, "checkin", "registration", reg_id, {"method": payload.get("method", "manual")})
     else:
-        await db.event_registrations.update_one({"id": reg_id}, {"$set": {"checked_in": False, "status": reg.get("prev_status", "registered"), "checked_in_at": None}})
+        await db.event_registrations.update_one({"id": reg_id}, {"$set": {"checked_in": False, "status": reg.get("prev_status", "registered"), "checked_in_at": None, "checkin_method": None, "checked_in_by": None}})
+        await log_audit(user, "checkin_undo", "registration", reg_id)
     return {"ok": True}
 
 class EventReportIn(BaseModel):

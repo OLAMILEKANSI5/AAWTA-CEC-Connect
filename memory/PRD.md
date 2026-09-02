@@ -76,3 +76,13 @@ Part of a 7-phase event-management overhaul (A→G). Decisions: paid events use 
 - Phase E: document editing, descriptions in listing, visibility/audience (default Private Draft), send/assign, archive/eligible-delete, actions.
 - Phase F: automatic onboarding assignment by approved profile + approval/welcome notifications.
 - Phase G: role permissions incl. event-scoped Check-In Volunteer assignment (auto-expire) + expanded Audit History; final security review.
+
+## Implemented (2026-06, Phase B — Registration Management, Manual & Walk-In)
+- Registration management table (`RegistrationTable.jsx`, in `EventManage.jsx` Registrations tab): 18 columns (Select, Name, Member, State, Business, Website, Email, Phone, Category, Source, Confirmation #, Payment, Confirmation, Check-in, Check-in time, Badge, Print, Actions), search + filter bar (state/member/category/source/payment/confirmation/checkin/badge + Show Archived), inline payment dropdown, per-row Print Badge, and a More Actions menu (View, Edit, Send/Resend Confirmation, Check In/Undo, Change Category, Cancel, Archive, View Activity History).
+- Manual registration: POST `/events/{id}/manual-registration` (source "Manual Entry", full fields, complimentary→payment, opt-ins→consent only when true, created/updated audit, no auto-email); post-save panel offers Send Confirmation / Check In / Print Badge / Add Another.
+- Walk-in: POST `/events/{id}/registrations` (source "Walk-In", checked-in, badge category, requires first_name + email-or-phone server-side); enhanced Check-In tab form.
+- Edit `PUT /registrations/{id}` (partial + field clearing via exclude_unset, name recompute, website normalize, field-level audit); staff cancel `/registrations/{id}/cancel`; archive `/registrations/{id}/archive`; badge-printed `/registrations/{id}/badge-printed`; activity history `/registrations/{id}/history`.
+- Enhanced list filters with re.escape (safe regex), archived excluded by default. Check-in now audited + undo clears stale metadata; round-7 undo→prev_status regression still passes.
+- BadgeCenter now exports `printBadges(regs,event,{w,h})` (reused by row Print).
+- Verified: iteration_9 (48/50 backend, all frontend flows) + post-fix self-test (walk-in 400, manual invalid-payment 400, `+`-search, field clearing). Fixed: regex escape, walk-in contact validation, manual payment validation, editable clearing, Manage-dialog horizontal-overflow clipping, payment labels, `<span>`-in-`<option>`, Show Archived toggle.
+- Deferred to Phase C: bulk-action bar for the existing row checkboxes.
