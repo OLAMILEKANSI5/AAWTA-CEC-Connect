@@ -1,0 +1,44 @@
+{
+  "summary": "Re-test of the 6 iteration_12 fixes plus full Phase E/F/G + Phase A-D regression. ALL 6 FIXES VERIFIED. Extended /app/backend/tests/test_phaseefg.py from 22 to 32 tests with a dedicated TestIteration12Fixes class (10 new tests): sign visibility enforcement (private_draft 403, admins_only 403, assigned member 200 + signature row created), non-destructive partial PUT (audience/assigned_to/assigned_roles preserved; member retains access) and full-object PUT still working, invalid audience -> 400 on create and edit, archive of non-existent id -> 404, DELETE blocked when assigned_roles non-empty (400 'archive it instead', doc still present), convert on a 'New' application -> 400 with no member created. Phase E/F/G: 32/32 (1 email-provider flake). Phase A-D regression: 150/151 (only failure is the same email provider flake). UI verified via Playwright as staff (audLabel fallback now renders 'Private Draft — Not Assigned' for a legacy doc with no audience field, zero 'undefined' across all meta lines; UI create + UI full-object edit preserved audience=all_active) and as ambassador member (only visible docs listed, no New Document button, sign succeeded on a visible doc). All artifacts cleaned; evt_246d20a66b31 left Approved/published with checkin_assignees=[].",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "PUT /api/documents/{id}", "issue": "Partial PUT is now non-destructive (exclude_unset) BUT DocumentIn still declares title and category as required, so a body of {assigned_roles:[...]} alone returns 422. Only bodies that include title+category can be partial. Acceptable for the current UI (it always sends the full object) but if a true PATCH-style API is intended, split out a DocumentEditIn with all-Optional fields."},
+      {"endpoint": "emailer (log_and_send)", "issue": "STILL PRESENT (unchanged from it_12, treated as infra flake per instructions): provider returns no message id intermittently (~50% of sends in this run) -> email_log status 'failed', error 'Provider did not return a message id'. Same address (delivered@resend.dev) succeeds on retry. No retry/backoff. Causes flaky failures in test_phaseefg::test_convert_assigns_ambassador_docs_and_sends_welcome and test_phaseb_regmgmt::test_manual_no_auto_confirmation_email."},
+      {"endpoint": "_doc_visible_to", "issue": "Still supports audience 'interns_only' / role 'intern' while ROLES has no 'intern' role — dead branch (carried over from it_12, not a regression)."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Documents dialog (DialogContent)", "issue": "a11y console warning persists: 'Missing Description or aria-describedby={undefined} for DialogContent' on both the create/edit and sign dialogs. Cosmetic/a11y only.", "selector": "[role='dialog']", "priority": "LOW"},
+      {"component": "Documents DropdownMenu", "issue": "'Assign to all active' menu item still has no data-testid (Edit/Archive/Delete do).", "selector": "[data-testid='doc-actions-<id>']", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_phaseefg.py",
+    "/app/test_reports/pytest/phaseefg_it13.xml",
+    "/app/test_reports/pytest/regression_ad_it13.xml"
+  ],
+  "action_items": [
+    "Optional: add retry/backoff (or a queue) around log_and_send so a transient 'no message id' provider response does not permanently mark welcome/confirmation emails 'failed'. This is the only remaining recurring failure.",
+    "Optional: make title/category Optional in the edit payload (dedicated DocumentEditIn) if true partial PATCH semantics are desired; today a partial PUT must still include title+category or it 422s.",
+    "Optional (LOW): add aria-describedby/DialogDescription to Documents dialogs and a data-testid to the 'Assign to all active' menu item."
+  ],
+  "critical_code_review_comments": [
+    "All 6 fixes are implemented correctly and defensively: sign_document mirrors _doc_visible_to, edit_document uses model_dump(exclude_unset=True) + audience validation, create_document validates audience, archive_document 404s on missing doc, delete_document guards signatures + assigned_to + assigned_roles + audience!=private_draft, convert_to_member gates on status in (Approved, Recommended, Recommended for Approval).",
+    "server.py is now 2839 lines — still recommend splitting into routers (documents, events/registrations, applications/members, email).",
+    "audience validation is duplicated in create_document and edit_document; move it into a Pydantic field_validator on DocumentIn to keep the two paths in sync."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_phaseefg.py (added TestIteration12Fixes with 10 fix-verification tests; suite is now 32 tests)"
+  ],
+  "success_rate": {"backend": "32/32 Phase E-F-G (100%, welcome-email assertion flaky ~50% due to provider) + 150/151 Phase A-D (single failure = same email provider flake)", "frontend": "100% of tested Documents flows (staff: audLabel fallback, create, full-object edit preserving audience; member: visibility filtering + sign)"},
+  "seed_data_creation": "Re-ran seed_badge.py, seed_phasea.py, cleanup_phasec.py + seed_phasec.py. Temporarily inserted doc_TEST_legacy (no audience field, assigned_roles=[ambassador]) in mongo to prove the UI fallback, then deleted it. All TEST_ documents/signatures/members/applications and welcome email_log rows removed; only the pre-existing user doc doc_9464f19b023a remains. evt_246d20a66b31 = Approved, published=true, checkin_assignees=[].",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "Staff super_admin: Bearer/cookie tok_admtest. Member (ambassador, mem_memba): tok_memba. Both valid. /app/memory/test_credentials.md still lists user_admmtest while the actual user_id is user_admtest.",
+  "context_for_next_testing_agent": "Phase E/F/G suite is /app/backend/tests/test_phaseefg.py (32 tests, includes TestIteration12Fixes). Run order: python seed_badge.py && python seed_phasea.py; for Phase C always run cleanup_phasec.py then seed_phasec.py (non-idempotent). pytest.ini forces xdist — use '-p xdist -n0' for serial. Run cleanup_efg.py afterwards. The Emergent email integration intermittently returns no message id, so any assertion on email_log status=='sent' is flaky (retry once before reporting). Note DocumentIn still requires title+category on PUT, so 'partial' payloads must include them. UI testids: new-document-btn, field-title, field-description, doc-audience, save-document-btn, doc-actions-<id>, doc-edit/archive/delete-<id>, sign-<id>, sign-legal-name, sign-consent, submit-signature-btn, download-signed-<id>.",
+  "rca_of_the_issue": "No new product defects. The single recurring test failure is external: send_email returns without a provider message id (~50% of calls) so log_and_send marks the row 'failed'; identical payload/address succeeds on retry, confirming a provider rate-limit/quota condition rather than an application bug. Everything else previously reported in iteration_12 is fixed and covered by regression tests."
+}

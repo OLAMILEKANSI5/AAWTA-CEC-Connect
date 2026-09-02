@@ -1,0 +1,143 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="9" skipped="0" tests="151" time="47.775" timestamp="2026-09-02T01:36:10.450180+00:00" hostname="agent-env-f28bc123-7cc7-44ad-b831-bdf805625cb6"><testcase classname="tests.test_phasea_registrations.TestFreeRegistration" name="test_register_full_payload_and_persistence" time="0.444" /><testcase classname="tests.test_phasea_registrations.TestFreeRegistration" name="test_optins_default_false_and_no_consents" time="0.108" /><testcase classname="tests.test_phasea_registrations.TestFreeRegistration" name="test_confirmation_email_sent_with_correct_subject" time="2.290"><failure message="AssertionError: expected sent, got failed err=Provider did not return a message id&#10;assert 'failed' == 'sent'&#10;  &#10;  - sent&#10;  + failed">self = &lt;test_phasea_registrations.TestFreeRegistration object at 0xf8e3b0397a90&gt;
+anon = &lt;requests.sessions.Session object at 0xf8e3a37edd10&gt;
+admin = &lt;requests.sessions.Session object at 0xf8e3a37ee350&gt;
+mongo = Database(MongoClient(host=['localhost:27017'], document_class=dict, tz_aware=False, connect=True), 'test_database')
+
+    def test_confirmation_email_sent_with_correct_subject(self, anon, admin, mongo):
+        addr = f"delivered+{TAG}@resend.dev"
+        data = register(anon, FREE_EVENT, payload("del", email=addr)).json()
+        log = wait_for_email(admin, data["id"], "registration_confirmation")
+        assert log["subject"] == "Registration Confirmed: Phase A Test Event", log["subject"]
+&gt;       assert log["status"] == "sent", f"expected sent, got {log['status']} err={log.get('error')}"
+E       AssertionError: expected sent, got failed err=Provider did not return a message id
+E       assert 'failed' == 'sent'
+E         
+E         - sent
+E         + failed
+
+tests/test_phasea_registrations.py:159: AssertionError</failure></testcase><testcase classname="tests.test_phasea_registrations.TestFreeRegistration" name="test_duplicate_registration_rejected" time="0.294" /><testcase classname="tests.test_phasea_registrations.TestFreeRegistration" name="test_honeypot_rejected" time="0.087" /><testcase classname="tests.test_phasea_registrations.TestFreeRegistration" name="test_missing_required_field_422" time="0.165" /><testcase classname="tests.test_phasea_registrations.TestFreeRegistration" name="test_unknown_event_404" time="0.086" /><testcase classname="tests.test_phasea_registrations.TestWaitlist" name="test_full_event_goes_to_waitlist_with_waitlist_email" time="0.323" /><testcase classname="tests.test_phasea_registrations.TestPaidFlow" name="test_pending_payment_on_register" time="0.455" /><testcase classname="tests.test_phasea_registrations.TestPaidFlow" name="test_mark_paid_sends_confirmation_once" time="3.584"><failure message="AssertionError: assert 1 == 2&#10; +  where 1 = len([{'from': 'pending', 'to': 'paid', 'by': 'Test Admin', 'by_id': 'user_admtest', ...}])">self = &lt;test_phasea_registrations.TestPaidFlow object at 0xf8e3b039f0d0&gt;
+anon = &lt;requests.sessions.Session object at 0xf8e3a37edd10&gt;
+admin = &lt;requests.sessions.Session object at 0xf8e3a37ee350&gt;
+mongo = Database(MongoClient(host=['localhost:27017'], document_class=dict, tz_aware=False, connect=True), 'test_database')
+paid_event = 'evt_b2e871bff40f'
+
+    def test_mark_paid_sends_confirmation_once(self, anon, admin, mongo, paid_event):
+        data = register(anon, paid_event, payload("paid2")).json()
+        rid = data["id"]
+        wait_for_email(admin, rid, "pending_payment")
+    
+        r = admin.put(f"{BASE}/registrations/{rid}/payment", json={"payment_status": "paid", "note": "TEST paid"}, timeout=60)
+        assert r.status_code == 200, r.text[:300]
+        out = r.json()
+        assert "_id" not in out
+        assert out["payment_status"] == "paid"
+        assert out["confirmation_sent"] is True
+        hist = out["payment_history"]
+        assert len(hist) == 1
+        assert hist[0]["from"] == "pending" and hist[0]["to"] == "paid"
+        assert hist[0]["by"] and hist[0]["at"]
+    
+        confs = [l for l in emails(admin, rid) if l["template"] == "registration_confirmation"]
+        assert len(confs) == 1
+        assert confs[0]["subject"] == f"Registration Confirmed: TEST_PhaseA Paid {TAG}"
+    
+        # repeat -&gt; no duplicate confirmation
+        r2 = admin.put(f"{BASE}/registrations/{rid}/payment", json={"payment_status": "paid"}, timeout=60)
+        assert r2.status_code == 200
+        time.sleep(3)
+        confs2 = [l for l in emails(admin, rid) if l["template"] == "registration_confirmation"]
+        assert len(confs2) == 1, f"duplicate confirmation sent: {len(confs2)}"
+&gt;       assert len(r2.json()["payment_history"]) == 2
+E       AssertionError: assert 1 == 2
+E        +  where 1 = len([{'from': 'pending', 'to': 'paid', 'by': 'Test Admin', 'by_id': 'user_admtest', ...}])
+
+tests/test_phasea_registrations.py:256: AssertionError</failure></testcase><testcase classname="tests.test_phasea_registrations.TestPaidFlow" name="test_complimentary_sends_confirmation" time="0.438" /><testcase classname="tests.test_phasea_registrations.TestPaidFlow" name="test_invalid_payment_status_400" time="0.188" /><testcase classname="tests.test_phasea_registrations.TestPaidFlow" name="test_payment_unknown_registration_404" time="0.080" /><testcase classname="tests.test_phasea_registrations.TestResend" name="test_resend_confirmation" time="0.507" /><testcase classname="tests.test_phasea_registrations.TestQR" name="test_qr_png_and_404" time="0.355" /><testcase classname="tests.test_phasea_registrations.TestPublicManage" name="test_manage_detail_and_wrong_token" time="0.368" /><testcase classname="tests.test_phasea_registrations.TestPublicManage" name="test_cancel_then_reregister" time="0.494" /><testcase classname="tests.test_phasea_registrations.TestPublicManage" name="test_cancel_blocked_when_not_allowed" time="0.351" /><testcase classname="tests.test_phasea_registrations.TestAuthorization" name="test_anonymous_401" time="0.373" /><testcase classname="tests.test_phasea_registrations.TestAuthorization" name="test_non_owner_member_403" time="0.418" /><testcase classname="tests.test_phasea_registrations.TestAuthorization" name="test_public_endpoints_need_no_auth" time="0.193" /><testcase classname="tests.test_phasea_registrations.TestWebhook" name="test_delivered_and_bounced_and_unknown" time="0.455" /><testcase classname="tests.test_phaseb_regmgmt.TestManualRegistration" name="test_manual_fields_and_defaults" time="0.292" /><testcase classname="tests.test_phaseb_regmgmt.TestManualRegistration" name="test_manual_no_auto_confirmation_email" time="10.509"><failure message="AssertionError: {'id': 'elog_654c54189812', 'provider_id': None, 'to': 'delivered+6a1e29noem@resend.dev', 'subject': 'Registration Confirmed: Phase A Test Event', ...}&#10;assert 'failed' == 'sent'&#10;  &#10;  - sent&#10;  + failed">self = &lt;test_phaseb_regmgmt.TestManualRegistration object at 0xf8e3b03cc790&gt;
+admin = &lt;requests.sessions.Session object at 0xf8e3a1e79fd0&gt;
+
+    def test_manual_no_auto_confirmation_email(self, admin):
+        reg = mk_manual(admin, email=f"delivered+{TAG}noem@resend.dev")
+        import time
+        time.sleep(3)
+        logs = admin.get(f"{API}/registrations/{reg['id']}/emails").json()
+        assert [l for l in logs if l.get("template") == "registration_confirmation"] == [], logs
+        # admin can then send it
+        r = admin.post(f"{API}/registrations/{reg['id']}/send-confirmation")
+        assert r.status_code == 200
+        time.sleep(4)
+        logs = admin.get(f"{API}/registrations/{reg['id']}/emails").json()
+        conf = [l for l in logs if l.get("template") == "registration_confirmation"]
+        assert len(conf) == 1
+&gt;       assert conf[0]["status"] == "sent", conf[0]
+E       AssertionError: {'id': 'elog_654c54189812', 'provider_id': None, 'to': 'delivered+6a1e29noem@resend.dev', 'subject': 'Registration Confirmed: Phase A Test Event', ...}
+E       assert 'failed' == 'sent'
+E         
+E         - sent
+E         + failed
+
+tests/test_phaseb_regmgmt.py:132: AssertionError</failure></testcase><testcase classname="tests.test_phaseb_regmgmt.TestManualRegistration" name="test_manual_complimentary_and_checked_in" time="0.072" /><testcase classname="tests.test_phaseb_regmgmt.TestManualRegistration" name="test_manual_optins_create_consents_only_when_true" time="0.094" /><testcase classname="tests.test_phaseb_regmgmt.TestManualRegistration" name="test_manual_member_status_no_sets_is_member_false" time="0.073" /><testcase classname="tests.test_phaseb_regmgmt.TestManualRegistration" name="test_manual_missing_first_name_422" time="0.080" /><testcase classname="tests.test_phaseb_regmgmt.TestManualRegistration" name="test_manual_unknown_event_404" time="0.076" /><testcase classname="tests.test_phaseb_regmgmt.TestWalkin" name="test_walkin_created_checked_in" time="0.155" /><testcase classname="tests.test_phaseb_regmgmt.TestWalkin" name="test_walkin_badge_category_from_ticket" time="0.071" /><testcase classname="tests.test_phaseb_regmgmt.TestWalkin" name="test_walkin_missing_name_rejected" time="0.071" /><testcase classname="tests.test_phaseb_regmgmt.TestWalkin" name="test_walkin_blank_name_rejected" time="0.068" /><testcase classname="tests.test_phaseb_regmgmt.TestWalkin" name="test_walkin_requires_email_or_phone" time="0.085" /><testcase classname="tests.test_phaseb_regmgmt.TestEdit" name="test_edit_updates_and_audits" time="0.306" /><testcase classname="tests.test_phaseb_regmgmt.TestEdit" name="test_noop_edit_no_audit" time="0.289" /><testcase classname="tests.test_phaseb_regmgmt.TestEdit" name="test_edit_unknown_reg_404" time="0.360" /><testcase classname="tests.test_phaseb_regmgmt.TestLifecycle" name="test_staff_cancel" time="0.314" /><testcase classname="tests.test_phaseb_regmgmt.TestLifecycle" name="test_archive_toggle_and_list_exclusion" time="0.530" /><testcase classname="tests.test_phaseb_regmgmt.TestLifecycle" name="test_badge_printed" time="0.450" /><testcase classname="tests.test_phaseb_regmgmt.TestLifecycle" name="test_history_newest_first" time="0.208" /><testcase classname="tests.test_phaseb_regmgmt.TestLifecycle" name="test_history_unknown_404" time="0.061" /><testcase classname="tests.test_phaseb_regmgmt.TestCheckin" name="test_checkin_and_undo_walkin_restores_walkin" time="0.476" /><testcase classname="tests.test_phaseb_regmgmt.TestCheckin" name="test_undo_waitlist_restores_waitlist" time="1.454" /><testcase classname="tests.test_phaseb_regmgmt.TestFilters" name="test_response_shape" time="0.211" /><testcase classname="tests.test_phaseb_regmgmt.TestFilters" name="test_q_matches_name_email_phone_business_conf" time="0.359" /><testcase classname="tests.test_phaseb_regmgmt.TestFilters" name="test_q_special_chars_are_regex_escaped" time="0.129" /><testcase classname="tests.test_phaseb_regmgmt.TestFilters" name="test_state_filter" time="0.075" /><testcase classname="tests.test_phaseb_regmgmt.TestFilters" name="test_member_filter" time="0.143" /><testcase classname="tests.test_phaseb_regmgmt.TestFilters" name="test_business_filter" time="0.078" /><testcase classname="tests.test_phaseb_regmgmt.TestFilters" name="test_category_filter" time="0.065" /><testcase classname="tests.test_phaseb_regmgmt.TestFilters" name="test_source_filter[online]" time="0.073" /><testcase classname="tests.test_phaseb_regmgmt.TestFilters" name="test_source_filter[Manual Entry]" time="0.078" /><testcase classname="tests.test_phaseb_regmgmt.TestFilters" name="test_source_filter[Walk-In]" time="0.073" /><testcase classname="tests.test_phaseb_regmgmt.TestFilters" name="test_source_filter[Bulk Import]" time="0.075" /><testcase classname="tests.test_phaseb_regmgmt.TestFilters" name="test_payment_filter[paid]" time="0.079" /><testcase classname="tests.test_phaseb_regmgmt.TestFilters" name="test_payment_filter[pending]" time="0.064" /><testcase classname="tests.test_phaseb_regmgmt.TestFilters" name="test_payment_filter[complimentary]" time="0.068" /><testcase classname="tests.test_phaseb_regmgmt.TestFilters" name="test_payment_filter[refunded]" time="0.077" /><testcase classname="tests.test_phaseb_regmgmt.TestFilters" name="test_payment_filter[not_applicable]" time="0.060" /><testcase classname="tests.test_phaseb_regmgmt.TestFilters" name="test_confirmation_filter[sent]" time="0.070" /><testcase classname="tests.test_phaseb_regmgmt.TestFilters" name="test_confirmation_filter[delivered]" time="0.075" /><testcase classname="tests.test_phaseb_regmgmt.TestFilters" name="test_confirmation_filter[opened]" time="0.056" /><testcase classname="tests.test_phaseb_regmgmt.TestFilters" name="test_confirmation_filter[failed]" time="0.071" /><testcase classname="tests.test_phaseb_regmgmt.TestFilters" name="test_confirmation_filter[bounced]" time="0.077" /><testcase classname="tests.test_phaseb_regmgmt.TestFilters" name="test_confirmation_not_sent_filter" time="0.059" /><testcase classname="tests.test_phaseb_regmgmt.TestFilters" name="test_checkin_filter" time="0.143" /><testcase classname="tests.test_phaseb_regmgmt.TestFilters" name="test_badge_filter" time="0.123" /><testcase classname="tests.test_phaseb_regmgmt.TestFilters" name="test_combined_filters" time="0.074" /><testcase classname="tests.test_phaseb_regmgmt.TestFilters" name="test_unknown_event_404" time="0.057" /><testcase classname="tests.test_phaseb_regmgmt.TestAuthz" name="test_anonymous_401" time="0.840" /><testcase classname="tests.test_phaseb_regmgmt.TestAuthz" name="test_non_owner_member_403" time="0.797" /><testcase classname="tests.test_phasec_import_export.TestImportTemplate" name="test_template_header_matches_import_fields" time="0.225" /><testcase classname="tests.test_phasec_import_export.TestImportTemplate" name="test_template_authz" time="0.372" /><testcase classname="tests.test_phasec_import_export.TestImportParse" name="test_parse_csv" time="0.078" /><testcase classname="tests.test_phasec_import_export.TestImportParse" name="test_parse_xlsx" time="0.228" /><testcase classname="tests.test_phasec_import_export.TestImportParse" name="test_parse_authz" time="0.161" /><testcase classname="tests.test_phasec_import_export.TestImportPreview" name="test_preview_validation_report" time="0.078" /><testcase classname="tests.test_phasec_import_export.TestImportPreview" name="test_preview_duplicate_detection_against_existing" time="0.157" /><testcase classname="tests.test_phasec_import_export.TestImportPreview" name="test_preview_duplicate_by_confirmation_number" time="0.178" /><testcase classname="tests.test_phasec_import_export.TestImportPreview" name="test_preview_authz" time="0.143" /><testcase classname="tests.test_phasec_import_export.TestImportCommit" name="test_commit_skip_inserts_valid_rows" time="0.147" /><testcase classname="tests.test_phasec_import_export.TestImportCommit" name="test_rerun_same_file_skip_marks_duplicates" time="0.074" /><testcase classname="tests.test_phasec_import_export.TestImportCommit" name="test_update_strategy_updates_existing" time="0.157" /><testcase classname="tests.test_phasec_import_export.TestImportCommit" name="test_new_strategy_inserts_duplicate_anyway" time="0.151" /><testcase classname="tests.test_phasec_import_export.TestImportCommit" name="test_commit_audit_logged" time="0.073" /><testcase classname="tests.test_phasec_import_export.TestImportCommit" name="test_commit_authz" time="0.180" /><testcase classname="tests.test_phasec_import_export.TestExport" name="test_csv_format_and_headers" time="0.076" /><testcase classname="tests.test_phasec_import_export.TestExport" name="test_xlsx_and_pdf_content_types" time="0.288" /><testcase classname="tests.test_phasec_import_export.TestExport" name="test_fields_param_limits_and_orders" time="0.072" /><testcase classname="tests.test_phasec_import_export.TestExport" name="test_ids_param_exports_only_selected" time="0.177" /><testcase classname="tests.test_phasec_import_export.TestExport" name="test_segments_filter[all]" time="0.169" /><testcase classname="tests.test_phasec_import_export.TestExport" name="test_segments_filter[checked_in]" time="0.168" /><testcase classname="tests.test_phasec_import_export.TestExport" name="test_segments_filter[not_checked_in]" time="0.173" /><testcase classname="tests.test_phasec_import_export.TestExport" name="test_segments_filter[walkins]" time="0.149" /><testcase classname="tests.test_phasec_import_export.TestExport" name="test_segments_filter[manual]" time="0.180" /><testcase classname="tests.test_phasec_import_export.TestExport" name="test_segments_filter[online]" time="0.167" /><testcase classname="tests.test_phasec_import_export.TestExport" name="test_segments_filter[imported]" time="0.148" /><testcase classname="tests.test_phasec_import_export.TestExport" name="test_segments_filter[members]" time="0.191" /><testcase classname="tests.test_phasec_import_export.TestExport" name="test_segments_filter[nonmembers]" time="0.162" /><testcase classname="tests.test_phasec_import_export.TestExport" name="test_segments_filter[newsletter]" time="0.177" /><testcase classname="tests.test_phasec_import_export.TestExport" name="test_segments_filter[events]" time="0.168" /><testcase classname="tests.test_phasec_import_export.TestExport" name="test_state_and_category_filters" time="0.150" /><testcase classname="tests.test_phasec_import_export.TestExport" name="test_staff_export_includes_contact_fields" time="0.071"><failure message="AssertionError: {&quot;detail&quot;:&quot;Not found&quot;}&#10;assert 404 == 200&#10; +  where 404 = &lt;Response [404]&gt;.status_code">self = &lt;test_phasec_import_export.TestExport object at 0xf8e3a38badd0&gt;
+admin = &lt;requests.sessions.Session object at 0xf8e3a1dcdb10&gt;
+
+    def test_staff_export_includes_contact_fields(self, admin):
+        r = admin.get(f"{API}/events/{OWNER_EVENT}/export", params={"format": "csv"})
+&gt;       assert r.status_code == 200, r.text[:200]
+E       AssertionError: {"detail":"Not found"}
+E       assert 404 == 200
+E        +  where 404 = &lt;Response [404]&gt;.status_code
+
+tests/test_phasec_import_export.py:369: AssertionError</failure></testcase><testcase classname="tests.test_phasec_import_export.TestExport" name="test_nonstaff_owner_export_strips_contact_fields" time="0.077"><failure message="AssertionError: {&quot;detail&quot;:&quot;Not found&quot;}&#10;assert 404 == 200&#10; +  where 404 = &lt;Response [404]&gt;.status_code">self = &lt;test_phasec_import_export.TestExport object at 0xf8e3a38b85d0&gt;
+member = &lt;requests.sessions.Session object at 0xf8e3a1da0850&gt;
+
+    def test_nonstaff_owner_export_strips_contact_fields(self, member):
+        r = member.get(f"{API}/events/{OWNER_EVENT}/export", params={"format": "csv"})
+&gt;       assert r.status_code == 200, r.text[:300]
+E       AssertionError: {"detail":"Not found"}
+E       assert 404 == 200
+E        +  where 404 = &lt;Response [404]&gt;.status_code
+
+tests/test_phasec_import_export.py:376: AssertionError</failure></testcase><testcase classname="tests.test_phasec_import_export.TestExport" name="test_nonstaff_owner_xlsx_pdf_strip_contacts" time="0.075"><failure message="assert 404 == 200&#10; +  where 404 = &lt;Response [404]&gt;.status_code">self = &lt;test_phasec_import_export.TestExport object at 0xf8e3a38c7a90&gt;
+member = &lt;requests.sessions.Session object at 0xf8e3a1da0850&gt;
+
+    def test_nonstaff_owner_xlsx_pdf_strip_contacts(self, member):
+        rp = member.get(f"{API}/events/{OWNER_EVENT}/export", params={"format": "pdf"})
+&gt;       assert rp.status_code == 200
+E       assert 404 == 200
+E        +  where 404 = &lt;Response [404]&gt;.status_code
+
+tests/test_phasec_import_export.py:390: AssertionError</failure></testcase><testcase classname="tests.test_phasec_import_export.TestExport" name="test_export_authz" time="0.158" /><testcase classname="tests.test_phasec_import_export.TestExport" name="test_export_audit_logged" time="0.079" /><testcase classname="tests.test_phasec_import_export.TestBulkActions" name="test_change_category" time="0.325" /><testcase classname="tests.test_phasec_import_export.TestBulkActions" name="test_assign_badge_category" time="0.241" /><testcase classname="tests.test_phasec_import_export.TestBulkActions" name="test_mark_complimentary" time="0.243" /><testcase classname="tests.test_phasec_import_export.TestBulkActions" name="test_update_payment_valid_and_invalid" time="0.309"><failure message="assert 400 == 200&#10; +  where 400 = &lt;Response [400]&gt;.status_code">self = &lt;test_phasec_import_export.TestBulkActions object at 0xf8e3a38c99d0&gt;
+admin = &lt;requests.sessions.Session object at 0xf8e3a1dcdb10&gt;
+bulk_targets = ['reg_7a447f8a8050', 'reg_ed95a90e7a34']
+
+    def test_update_payment_valid_and_invalid(self, admin, bulk_targets):
+        r = admin.post(f"{API}/events/{EVENT}/bulk",
+                       json={"action": "update_payment", "ids": bulk_targets, "value": "refunded"})
+        assert r.json()["affected"] == 2
+        for i in bulk_targets:
+            assert _get(admin, i)["payment_status"] == "refunded"
+        bad = admin.post(f"{API}/events/{EVENT}/bulk",
+                         json={"action": "update_payment", "ids": bulk_targets, "value": "not_a_status"})
+&gt;       assert bad.status_code == 200
+E       assert 400 == 200
+E        +  where 400 = &lt;Response [400]&gt;.status_code
+
+tests/test_phasec_import_export.py:456: AssertionError</failure></testcase><testcase classname="tests.test_phasec_import_export.TestBulkActions" name="test_resend_confirmation_bumps_counter" time="0.443" /><testcase classname="tests.test_phasec_import_export.TestBulkActions" name="test_checkin" time="0.235" /><testcase classname="tests.test_phasec_import_export.TestBulkActions" name="test_cancel" time="0.241" /><testcase classname="tests.test_phasec_import_export.TestBulkActions" name="test_archive_hides_from_default_list" time="0.402" /><testcase classname="tests.test_phasec_import_export.TestBulkActions" name="test_unknown_action_affects_nothing" time="0.080"><failure message="assert 400 == 200&#10; +  where 400 = &lt;Response [400]&gt;.status_code">self = &lt;test_phasec_import_export.TestBulkActions object at 0xf8e3a38cbd10&gt;
+admin = &lt;requests.sessions.Session object at 0xf8e3a1dcdb10&gt;
+bulk_targets = ['reg_7a447f8a8050', 'reg_ed95a90e7a34']
+
+    def test_unknown_action_affects_nothing(self, admin, bulk_targets):
+        r = admin.post(f"{API}/events/{EVENT}/bulk", json={"action": "nope", "ids": bulk_targets})
+&gt;       assert r.status_code == 200
+E       assert 400 == 200
+E        +  where 400 = &lt;Response [400]&gt;.status_code
+
+tests/test_phasec_import_export.py:497: AssertionError</failure></testcase><testcase classname="tests.test_phasec_import_export.TestBulkActions" name="test_bulk_audit_entries" time="0.079" /><testcase classname="tests.test_phasec_import_export.TestBulkActions" name="test_bulk_authz" time="0.145" /><testcase classname="tests.test_phasec_import_export.TestBulkActions" name="test_nonstaff_owner_can_bulk_on_own_event" time="0.076"><failure message="AssertionError: {&quot;detail&quot;:&quot;Not found&quot;}&#10;assert 404 == 200&#10; +  where 404 = &lt;Response [404]&gt;.status_code">self = &lt;test_phasec_import_export.TestBulkActions object at 0xf8e3a38d9290&gt;
+member = &lt;requests.sessions.Session object at 0xf8e3a1da0850&gt;
+
+    def test_nonstaff_owner_can_bulk_on_own_event(self, member):
+        r = member.post(f"{API}/events/{OWNER_EVENT}/bulk",
+                        json={"action": "change_category", "ids": ["reg_phasec_owner1"], "value": "General Admission"})
+&gt;       assert r.status_code == 200, r.text[:200]
+E       AssertionError: {"detail":"Not found"}
+E       assert 404 == 200
+E        +  where 404 = &lt;Response [404]&gt;.status_code
+
+tests/test_phasec_import_export.py:515: AssertionError</failure></testcase><testcase classname="tests.test_phasec_import_export.TestBulkActions" name="test_missing_event_404" time="0.140" /><testcase classname="tests.test_phased_checkin_badges.TestGetEvent" name="test_get_event_staff" time="0.174" /><testcase classname="tests.test_phased_checkin_badges.TestGetEvent" name="test_get_event_unknown_404" time="0.148" /><testcase classname="tests.test_phased_checkin_badges.TestGetEvent" name="test_get_event_anonymous_401" time="0.129" /><testcase classname="tests.test_phased_checkin_badges.TestGetEvent" name="test_get_event_non_owner_member" time="0.172" /><testcase classname="tests.test_phased_checkin_badges.TestLookup" name="test_lookup_found" time="0.257" /><testcase classname="tests.test_phased_checkin_badges.TestLookup" name="test_lookup_unknown_404" time="0.142" /><testcase classname="tests.test_phased_checkin_badges.TestLookup" name="test_lookup_anonymous_401" time="0.124" /><testcase classname="tests.test_phased_checkin_badges.TestLookup" name="test_lookup_non_owner_403" time="0.151" /><testcase classname="tests.test_phased_checkin_badges.TestCheckinFlow" name="test_qr_checkin_and_already_flag" time="0.310" /><testcase classname="tests.test_phased_checkin_badges.TestBadgeConfig" name="test_save_and_persist" time="0.259" /><testcase classname="tests.test_phased_checkin_badges.TestBadgeConfig" name="test_badge_config_non_owner_403" time="0.176" /><testcase classname="tests.test_phased_checkin_badges.TestBadgeConfig" name="test_badge_config_anon_401" time="0.145" /><testcase classname="tests.test_phased_checkin_badges.TestBadgesPdf" name="test_combined_pdf_one_page_per_reg" time="0.240" /><testcase classname="tests.test_phased_checkin_badges.TestBadgesPdf" name="test_zip_one_pdf_per_reg" time="0.162" /><testcase classname="tests.test_phased_checkin_badges.TestBadgesPdf" name="test_sizes[4-6]" time="0.156" /><testcase classname="tests.test_phased_checkin_badges.TestBadgesPdf" name="test_sizes[4-3]" time="0.156" /><testcase classname="tests.test_phased_checkin_badges.TestBadgesPdf" name="test_sizes[3.5-2]" time="0.138" /><testcase classname="tests.test_phased_checkin_badges.TestBadgesPdf" name="test_sizes[2.25-3.5]" time="0.157" /><testcase classname="tests.test_phased_checkin_badges.TestBadgesPdf" name="test_sizes[5.5-4.25]" time="0.125" /><testcase classname="tests.test_phased_checkin_badges.TestBadgesPdf" name="test_marks_printed_and_increments_count" time="0.531" /><testcase classname="tests.test_phased_checkin_badges.TestBadgesPdf" name="test_only_unprinted_excludes_printed" time="0.610" /><testcase classname="tests.test_phased_checkin_badges.TestBadgesPdf" name="test_checked_in_only" time="0.336" /><testcase classname="tests.test_phased_checkin_badges.TestBadgesPdf" name="test_empty_selection_400" time="0.150" /><testcase classname="tests.test_phased_checkin_badges.TestBadgesPdf" name="test_pdf_non_owner_403" time="0.147" /><testcase classname="tests.test_phased_checkin_badges.TestBadgesPdf" name="test_pdf_anon_401" time="0.175" /><testcase classname="tests.test_phased_checkin_badges.TestManualBadge" name="test_manual_pdf" time="0.164" /><testcase classname="tests.test_phased_checkin_badges.TestManualBadge" name="test_manual_pdf_no_db_write" time="0.477" /><testcase classname="tests.test_phased_checkin_badges.TestManualBadge" name="test_manual_missing_first_name_422" time="0.145" /><testcase classname="tests.test_phased_checkin_badges.TestManualBadge" name="test_manual_non_owner_403" time="0.127" /><testcase classname="tests.test_phased_checkin_badges.TestManualBadge" name="test_manual_anon_401" time="0.171" /></testsuite></testsuites>

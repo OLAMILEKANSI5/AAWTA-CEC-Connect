@@ -21,7 +21,13 @@ async def main():
         "user_id": "user_memba", "session_token": "tok_memba",
         "expires_at": (datetime.now(timezone.utc) + timedelta(days=30)).isoformat(),
         "created_at": now()}}, upsert=True)
-    print("seeded member session tok_memba / user_memba")
+    # member record linked to the session user (needed for document assignment/visibility tests)
+    await db.members.update_one({"id": "mem_memba"}, {"$set": {
+        "id": "mem_memba", "name": "Member PhaseA", "email": "member.phasea@example.com",
+        "login_email": "member.phasea@example.com", "role": "ambassador", "state": "GA",
+        "account_status": "active", "user_id": "user_memba", "linked": True,
+        "public_profile": False, "onboarding": [], "created_at": now()}}, upsert=True)
+    print("seeded member session tok_memba / user_memba + member mem_memba")
 
 
 asyncio.run(main())

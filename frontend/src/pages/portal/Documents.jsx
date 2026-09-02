@@ -49,7 +49,7 @@ export default function Documents() {
     try { await api.post(`/documents/${signDoc.id}/sign`, { legal_name: legalName, consent: true }); toast.success("Document signed"); setSignDoc(null); setLegalName(""); setConsent(false); load(); }
     catch (e) { toast.error(e?.response?.data?.detail || "Failed"); }
   };
-  const audLabel = (a) => (AUDIENCES.find((x) => x[0] === a) || [a, a])[1];
+  const audLabel = (a) => (AUDIENCES.find((x) => x[0] === (a || "private_draft")) || ["private_draft", "Private Draft"])[1];
 
   return (
     <div className="space-y-5">

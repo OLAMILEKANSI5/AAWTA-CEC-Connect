@@ -1,0 +1,60 @@
+{
+  "summary": "Independently validated Phases E (documents overhaul), F (auto-onboarding on convert + welcome email) and G (event-scoped Check-In Volunteer permissions) via a new pytest suite (22 tests) + Playwright UI runs of /portal/documents as staff and as an ambassador member, plus regression of Phases A-D (151 tests). All Phase E/F/G happy paths and the full authz matrix pass. Found 5 backend hardening/security issues (most notable: /documents/{id}/sign has NO visibility check, and PUT /documents/{id} with a partial body silently wipes audience/assignments) and 1 minor UI label bug. No blockers; all test artifacts cleaned up and evt_246d20a66b31 left Approved/published with checkin_assignees=[].",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "POST /api/documents/{id}/sign", "issue": "No visibility/assignment check. A non-staff member (tok_memba) can sign a private_draft or admins_only document they cannot see (verified 200 + signature row created). Side effect: the signature then permanently blocks deletion of the staff's private draft. Should mirror _doc_visible_to and 403.", "priority": "HIGH"},
+      {"endpoint": "PUT /api/documents/{id}", "issue": "Uses full DocumentIn with defaults, so any partial payload resets audience->'private_draft' and clears assigned_to/assigned_roles. Verified: doc with audience=specific_members + assigned_to=[mem_memba] + roles=[ambassador] became private_draft with empty assignments after PUT {title,category}. Members lose access silently. Use exclude_unset / merge, or a dedicated DocumentEditIn.", "priority": "HIGH"}
+    ],
+    "minor": [
+      {"endpoint": "POST /api/documents (and PUT)", "issue": "audience is not validated against DOC_AUDIENCES — 'not_a_real_audience' is accepted and results in a doc invisible to everyone (falls through _doc_visible_to)."},
+      {"endpoint": "PUT /api/documents/{id}/archive", "issue": "No existence check: archiving a non-existent id returns 200 with body null instead of 404 (all other doc endpoints 404)."},
+      {"endpoint": "POST /api/applications/{id}/convert", "issue": "No status gate — converting an application still in 'New' (never Approved) succeeds and creates a member + fires onboarding assignment + welcome email. Spec is 'convert an approved application'; should 400 unless status in (Approved) (or Recommended)."},
+      {"endpoint": "DELETE /api/documents/{id}", "issue": "Delete guard checks signatures/assigned_to/audience but not assigned_roles. Legacy docs stored without an 'audience' field but with assigned_roles (e.g. existing doc_9464f19b023a, roles=[ambassador]) are therefore deletable even though members see them."},
+      {"endpoint": "emailer (log_and_send)", "issue": "Provider 429 (Too Many Requests) from integrations.emergentagent.com/api/v1/email/send is logged as status 'failed' with no retry/backoff. Under sustained testing every email (welcome + registration confirmations) failed. Recommend retry with backoff or a queue so transient 429 does not permanently mark member-facing emails failed."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Documents.jsx audLabel()", "issue": "Legacy documents saved without an 'audience' field render the meta line as 'Onboarding · Required · undefined · 0 assigned · 0 signed' (audLabel returns undefined). Needs a fallback (e.g. treat missing audience as Private Draft).", "selector": "[data-testid^='doc-'] p.text-xs", "priority": "LOW"},
+      {"component": "Documents dialog / DropdownMenu", "issue": "Minor: 'Assign to all active' menu item has no data-testid (Edit/Archive/Delete do); DialogContent triggers a11y console warning 'Missing Description or aria-describedby'.", "selector": "[data-testid='doc-actions-<id>']", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_phaseefg.py",
+    "/app/backend/tests/probe_efg.py",
+    "/app/backend/tests/cleanup_efg.py",
+    "/app/test_reports/pytest/phaseefg.xml",
+    "/app/test_reports/pytest/regression_ad.xml"
+  ],
+  "action_items": [
+    "Add visibility enforcement to POST /api/documents/{id}/sign (403 when _doc_visible_to is False).",
+    "Make PUT /api/documents/{id} non-destructive (exclude_unset / merge) so audience + assigned_to + assigned_roles are preserved on partial edits.",
+    "Validate audience against DOC_AUDIENCES on create/edit; return 404 from PUT /documents/{id}/archive when the doc does not exist.",
+    "Gate POST /applications/{id}/convert on an approved application status.",
+    "Include assigned_roles in the DELETE /documents/{id} guard (and default missing audience to private_draft).",
+    "Consider retry/backoff for email provider 429s so welcome/confirmation emails are not permanently 'failed'."
+  ],
+  "critical_code_review_comments": [
+    "server.py is 2826 lines — split into routers (documents, events/registrations, applications/members, email) before it grows further.",
+    "edit_document/create_document share no validation helper; audience + role lists should be validated in a Pydantic validator on DocumentIn.",
+    "_doc_visible_to supports 'interns_only'/role 'intern' but ROLES has no 'intern' — dead branch or missing role definition.",
+    "Phase C bulk endpoint now returns 400 for invalid action/payment value (older tests asserted 200/affected=0) and PUT /registrations/{id}/payment no longer records history for a no-op status change; I updated those stale assertions — confirm both behaviours are intended."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_phaseefg.py (new)",
+    "/app/backend/tests/probe_efg.py (new)",
+    "/app/backend/tests/cleanup_efg.py (new)",
+    "/app/backend/tests/seed_phasea.py (now also seeds members doc mem_memba linked to user_memba — required for document assignment/visibility tests)",
+    "/app/backend/tests/test_phasea_registrations.py (stale assertion: payment_history unchanged on repeat same-status PUT)",
+    "/app/backend/tests/test_phasec_import_export.py (stale assertions: bulk invalid payment value / unknown action now 400)"
+  ],
+  "success_rate": {"backend": "100% (22/22 Phase E-F-G; 1 flaky on email provider 429) + 151/151 Phase A-D after stale-assertion fixes", "frontend": "100% of tested Documents flows (staff create/desc/edit/archive/restore/delete + member visibility & sign)"},
+  "seed_data_creation": "seed_badge.py + seed_phasea.py (extended with member mem_memba) + seed_phasec.py re-run. All TEST_ documents/signatures/members/applications/registrations created during testing were deleted via /app/backend/tests/cleanup_efg.py; evt_246d20a66b31 left status=Approved, published=true, checkin_assignees=[].",
+  "should_call_test_agent_after_fix": true,
+  "should_main_agent_self_test": false,
+  "test_credentials": "Staff: Bearer/cookie tok_admtest (super_admin). Member (ambassador, member id mem_memba): tok_memba. /app/memory/test_credentials.md is present and accurate (note: it lists user_admmtest, actual user_id is user_admtest).",
+  "context_for_next_testing_agent": "Run: python /app/backend/tests/seed_badge.py && python /app/backend/tests/seed_phasea.py && python /app/backend/tests/cleanup_phasec.py && python /app/backend/tests/seed_phasec.py before the suites. Phase C import tests are NOT idempotent — always run cleanup_phasec.py + seed_phasec.py first, otherwise duplicate-detection assertions fail. pytest.ini forces xdist; use '-p xdist -n0' for serial runs. Phase E/F/G suite: /app/backend/tests/test_phaseefg.py (22 tests). Run /app/backend/tests/cleanup_efg.py afterwards. The Emergent email integration is currently returning 429 (quota) so any test asserting email status=='sent' is flaky; the welcome-email path was verified 'sent' earlier in this iteration. UI: Documents dialog inputs use data-testid field-title / field-description / field-auto_onboarding; audience select is doc-audience.",
+  "rca_of_the_issue": "sign_document() only checks existence + prior signature, never _doc_visible_to, so document-level authz is enforced on list/get but not on sign (verified with tok_memba on a private_draft doc -> 200). Separately, edit_document() applies payload.model_dump() of the full DocumentIn model, so absent fields fall back to model defaults (audience='private_draft', assigned_to=[], assigned_roles=[]), destroying assignment state on any partial PUT; the UI happens to send the whole object so the bug is invisible from the current frontend. Phase A/C regression failures were (a) email provider 429 rate limiting and (b) stale test expectations vs. intentionally stricter backend validation — no product regression."
+}

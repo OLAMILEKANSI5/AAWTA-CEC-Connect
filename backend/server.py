@@ -426,6 +426,8 @@ async def convert_to_member(app_id: str, user=Depends(require_roles(*LEADERSHIP_
     a = await db.applications.find_one({"id": app_id}, {"_id": 0})
     if not a:
         raise HTTPException(404, "Not found")
+    if a.get("status") not in ("Approved", "Recommended", "Recommended for Approval"):
+        raise HTTPException(400, "Only an approved application can be converted to a member")
     role = "ambassador" if a["type"] == "ambassador" else "volunteer"
     member = await create_member_record(
         name=a["name"], email=a["email"], role=role, state=a.get("state"),
@@ -761,6 +763,8 @@ def _doc_visible_to(d, user, mid):
 
 @api_router.post("/documents")
 async def create_document(payload: DocumentIn, user=Depends(require_roles(*STAFF_ROLES))):
+    if payload.audience not in DOC_AUDIENCES:
+        raise HTTPException(400, "Invalid audience")
     doc = {"id": new_id("doc"), **payload.model_dump(), "created_by": user["name"], "created_at": now_iso(), "updated_at": now_iso()}
     await db.documents.insert_one(dict(doc))
     await log_audit(user, "document_created", "document", doc["id"], {"title": payload.title, "audience": payload.audience})
@@ -807,10 +811,12 @@ async def edit_document(doc_id: str, payload: DocumentIn, user=Depends(require_r
     d = await db.documents.find_one({"id": doc_id}, {"_id": 0})
     if not d:
         raise HTTPException(404, "Not found")
-    upd = payload.model_dump()
+    upd = payload.model_dump(exclude_unset=True)
+    if "audience" in upd and upd["audience"] not in DOC_AUDIENCES:
+        raise HTTPException(400, "Invalid audience")
     upd["updated_at"] = now_iso()
     await db.documents.update_one({"id": doc_id}, {"$set": upd})
-    await log_audit(user, "document_updated", "document", doc_id, {"title": payload.title})
+    await log_audit(user, "document_updated", "document", doc_id, {"title": upd.get("title", d.get("title"))})
     return await db.documents.find_one({"id": doc_id}, {"_id": 0})
 
 
@@ -849,6 +855,8 @@ async def assign_document(doc_id: str, payload: DocAssignIn, user=Depends(requir
 
 @api_router.put("/documents/{doc_id}/archive")
 async def archive_document(doc_id: str, payload: Dict[str, Any], user=Depends(require_roles(*STAFF_ROLES))):
+    if not await db.documents.find_one({"id": doc_id}, {"_id": 1}):
+        raise HTTPException(404, "Not found")
     val = "archived" if payload.get("archived", True) else "active"
     await db.documents.update_one({"id": doc_id}, {"$set": {"status": val, "updated_at": now_iso()}})
     await log_audit(user, "document_archived" if val == "archived" else "document_unarchived", "document", doc_id)
@@ -861,7 +869,7 @@ async def delete_document(doc_id: str, user=Depends(require_roles(*STAFF_ROLES))
     if not d:
         raise HTTPException(404, "Not found")
     sigs = await db.signatures.count_documents({"document_id": doc_id})
-    if sigs or (d.get("assigned_to") or []) or d.get("audience", "private_draft") != "private_draft":
+    if sigs or (d.get("assigned_to") or []) or (d.get("assigned_roles") or []) or d.get("audience", "private_draft") != "private_draft":
         raise HTTPException(400, "This document has been assigned or signed and cannot be deleted — archive it instead.")
     await db.documents.delete_one({"id": doc_id})
     await log_audit(user, "document_deleted", "document", doc_id, {"title": d.get("title")})
@@ -893,6 +901,10 @@ async def sign_document(doc_id: str, payload: SignIn, request: Request, user=Dep
     d = await db.documents.find_one({"id": doc_id}, {"_id": 0})
     if not d:
         raise HTTPException(404, "Document not found")
+    if user["role"] not in STAFF_ROLES:
+        m0 = await db.members.find_one({"user_id": user["user_id"]}, {"_id": 0})
+        if not _doc_visible_to(d, user, m0["id"] if m0 else None):
+            raise HTTPException(403, "You do not have access to this document")
     existing = await db.signatures.find_one({"document_id": doc_id, "user_id": user["user_id"]}, {"_id": 0})
     if existing:
         raise HTTPException(400, "Already signed. Signed documents cannot be overwritten.")
@@ -1087,14 +1099,16 @@ def normalize_website(u):
 
 async def log_and_send(*, to, subject, inner_html, title, template, related_type=None, related_id=None):
     log_id = new_id("elog"); provider_id = None; status = "failed"; error = None
-    try:
-        provider_id = await send_email(to=to, subject=subject, html=_wrap(title, inner_html))
-        if provider_id:
-            status = "sent"
-        else:
+    for attempt in range(3):
+        try:
+            provider_id = await send_email(to=to, subject=subject, html=_wrap(title, inner_html))
+            if provider_id:
+                status = "sent"; error = None; break
             error = "Provider did not return a message id"
-    except Exception as e:
-        error = str(e)
+        except Exception as e:
+            error = str(e)
+        if attempt < 2:
+            await asyncio.sleep(1.5 * (attempt + 1))
     doc = {"id": log_id, "provider_id": provider_id, "to": to, "subject": subject, "template": template,
            "related_type": related_type, "related_id": related_id, "status": status, "error": error,
            "attempts": 1, "sent_at": now_iso() if status == "sent" else None, "delivered_at": None,

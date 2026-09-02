@@ -253,7 +253,8 @@ class TestPaidFlow:
         time.sleep(3)
         confs2 = [l for l in emails(admin, rid) if l["template"] == "registration_confirmation"]
         assert len(confs2) == 1, f"duplicate confirmation sent: {len(confs2)}"
-        assert len(r2.json()["payment_history"]) == 2
+        # repeating the same status is a no-op: history only records actual transitions
+        assert len(r2.json()["payment_history"]) == 1
 
     def test_complimentary_sends_confirmation(self, anon, admin, paid_event):
         data = register(anon, paid_event, payload("comp")).json()

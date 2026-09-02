@@ -118,3 +118,9 @@ Part of a 7-phase event-management overhaul (A→G). Decisions: paid events use 
 - Check-in volunteer ASSIGNMENT UI (endpoint exists; no dedicated picker yet — assign via API).
 - Notification template editor / preview / test-send (welcome uses a fixed on-brand template).
 - server.py (2600+ lines) still needs router refactor.
+
+## Phases E-G — Verified (iteration_13: 32/32 E-F-G, 150/151 A-D)
+- All 6 iteration_12 fixes verified: sign_document visibility enforcement (403), non-destructive partial PUT (exclude_unset), audience validation (400), archive 404 on missing, delete guard incl assigned_roles, convert gated on Approved status.
+- Added email retry/backoff (3 attempts) in log_and_send to survive transient provider "no message id" responses.
+- Remaining (optional/low, non-blocking): DocumentEditIn for true PATCH (title/category still required on PUT); a11y aria-describedby on Documents dialogs; 'Assign to all active' data-testid; move audience validation into a Pydantic validator; split 2839-line server.py into routers; remove dead 'intern' role branch or add the role.
+- Known infra flake: Emergent email provider intermittently returns no message id (rate limit) — now mitigated with retry; not a product bug.

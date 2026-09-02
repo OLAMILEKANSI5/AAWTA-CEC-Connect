@@ -453,8 +453,7 @@ class TestBulkActions:
             assert _get(admin, i)["payment_status"] == "refunded"
         bad = admin.post(f"{API}/events/{EVENT}/bulk",
                          json={"action": "update_payment", "ids": bulk_targets, "value": "not_a_status"})
-        assert bad.status_code == 200
-        assert bad.json()["affected"] == 0, "invalid payment status must not update rows"
+        assert bad.status_code == 400, "invalid payment status must be rejected"
         for i in bulk_targets:
             assert _get(admin, i)["payment_status"] == "refunded"
 
@@ -494,8 +493,7 @@ class TestBulkActions:
 
     def test_unknown_action_affects_nothing(self, admin, bulk_targets):
         r = admin.post(f"{API}/events/{EVENT}/bulk", json={"action": "nope", "ids": bulk_targets})
-        assert r.status_code == 200
-        assert r.json()["affected"] == 0
+        assert r.status_code == 400, "unknown bulk action must be rejected"
 
     def test_bulk_audit_entries(self, admin):
         logs = admin.get(f"{API}/audit-logs", params={"q": "bulk_"}).json()
