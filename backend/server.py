@@ -1253,10 +1253,10 @@ async def update_registration_payment(reg_id: str, payload: PaymentUpdate, user=
     reg = await db.event_registrations.find_one({"id": reg_id}, {"_id": 0})
     settings = await get_settings_doc()
     if payload.payment_status in ("paid", "complimentary") and not reg.get("confirmation_sent") and reg.get("status") != "waitlist":
-        asyncio.create_task(send_registration_confirmation(reg, ev, settings))
+        await send_registration_confirmation(reg, ev, settings)
     elif payload.payment_status == "pending" and not reg.get("pending_notice_sent"):
-        asyncio.create_task(send_pending_payment_notice(reg, ev, settings))
-    return reg
+        await send_pending_payment_notice(reg, ev, settings)
+    return await db.event_registrations.find_one({"id": reg_id}, {"_id": 0})
 
 
 @api_router.post("/registrations/{reg_id}/send-confirmation")
@@ -1598,6 +1598,312 @@ async def checkin_registration(reg_id: str, payload: Dict[str, Any], user=Depend
         await db.event_registrations.update_one({"id": reg_id}, {"$set": {"checked_in": False, "status": reg.get("prev_status", "registered"), "checked_in_at": None, "checkin_method": None, "checked_in_by": None}})
         await log_audit(user, "checkin_undo", "registration", reg_id)
     return {"ok": True}
+
+IMPORT_FIELDS = ["first_name", "last_name", "email", "phone", "state", "city", "zip_code", "member_status",
+                 "business_name", "business_website", "job_title", "ticket_category", "payment_status",
+                 "badge_category", "newsletter_opt_in", "events_opt_in", "internal_notes", "confirmation_number"]
+EXPORT_FIELDS = ["name", "email", "phone", "state", "city", "member_status", "business_name", "business_website",
+                 "job_title", "ticket_category", "source", "confirmation_number", "payment_status",
+                 "confirmation_status", "checked_in", "checked_in_at", "badge_status", "newsletter_opt_in",
+                 "events_opt_in", "created_at"]
+CONTACT_FIELDS = {"email", "phone"}
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+async def _event_authz(event_id, user):
+    ev = await db.events.find_one({"id": event_id}, {"_id": 0})
+    if not ev: raise HTTPException(404, "Not found")
+    if user["role"] not in STAFF_ROLES and ev.get("submitted_by_id") != user["user_id"]:
+        raise HTTPException(403, "Forbidden")
+    return ev
+
+
+def _auto_map(columns):
+    m = {}
+    norm = {re.sub(r"[^a-z0-9]", "", c.lower()): c for c in columns}
+    aliases = {"first_name": ["firstname", "first"], "last_name": ["lastname", "last", "surname"],
+               "email": ["email", "emailaddress", "e-mail"], "phone": ["phone", "phonenumber", "mobile", "cell"],
+               "state": ["state", "stateterritory"], "city": ["city"], "zip_code": ["zip", "zipcode", "postalcode"],
+               "member_status": ["member", "memberstatus", "aawtamember"], "business_name": ["business", "businessname", "organization", "company"],
+               "business_website": ["website", "businesswebsite", "url"], "job_title": ["jobtitle", "title", "role"],
+               "ticket_category": ["category", "ticketcategory", "registrationcategory", "ticket"],
+               "payment_status": ["payment", "paymentstatus"], "badge_category": ["badge", "badgecategory"],
+               "newsletter_opt_in": ["newsletter", "newsletteroptin"], "events_opt_in": ["events", "eventsoptin", "upcomingevents"],
+               "internal_notes": ["notes", "internalnotes"], "confirmation_number": ["confirmation", "confirmationnumber", "confirmationno"]}
+    for field in IMPORT_FIELDS:
+        for a in [re.sub(r"[^a-z0-9]", "", field)] + aliases.get(field, []):
+            if a in norm:
+                m[field] = norm[a]; break
+    return m
+
+
+def _row_to_record(row, mapping):
+    rec = {}
+    for field, col in mapping.items():
+        if col and col in row:
+            rec[field] = (row[col] or "").strip() if isinstance(row[col], str) else row[col]
+    return rec
+
+
+def _truthy(v):
+    return str(v).strip().lower() in ("yes", "true", "1", "y", "x")
+
+
+@api_router.get("/events/{event_id}/import-template.csv")
+async def import_template(event_id: str, user=Depends(get_current_user)):
+    await _event_authz(event_id, user)
+    buf = io.StringIO(); w = csv.writer(buf)
+    w.writerow(IMPORT_FIELDS)
+    w.writerow(["Jane", "Doe", "jane@example.com", "555-123-4567", "Georgia", "Atlanta", "30301", "Yes",
+                "Doe Logistics", "doelogistics.com", "Owner", "General Admission", "paid", "Member", "Yes", "No", "", ""])
+    return StreamingResponse(io.BytesIO(buf.getvalue().encode()), media_type="text/csv",
+                             headers={"Content-Disposition": "attachment; filename=registration_import_template.csv"})
+
+
+@api_router.post("/events/{event_id}/import/parse")
+async def import_parse(event_id: str, file: UploadFile = File(...), user=Depends(get_current_user)):
+    await _event_authz(event_id, user)
+    content = await file.read()
+    name = (file.filename or "").lower()
+    columns, rows = [], []
+    if name.endswith(".xlsx"):
+        from openpyxl import load_workbook
+        wb = load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+        ws = wb.active
+        it = ws.iter_rows(values_only=True)
+        header = next(it, None) or []
+        columns = [str(h).strip() if h is not None else f"col{i}" for i, h in enumerate(header)]
+        for r in it:
+            if r is None: continue
+            d = {columns[i]: ("" if v is None else str(v)) for i, v in enumerate(r) if i < len(columns)}
+            if any(str(v).strip() for v in d.values()): rows.append(d)
+    else:
+        text = content.decode("utf-8-sig", errors="replace")
+        reader = csv.DictReader(io.StringIO(text))
+        columns = [c for c in (reader.fieldnames or []) if c]
+        for r in reader:
+            rows.append({k: (v or "") for k, v in r.items() if k})
+    return {"columns": columns, "rows": rows[:2000], "count": len(rows), "mapping": _auto_map(columns)}
+
+
+class ImportRowsIn(BaseModel):
+    mapping: Dict[str, str]
+    rows: List[Dict[str, Any]]
+    duplicate_strategy: Optional[str] = "skip"
+
+
+@api_router.post("/events/{event_id}/import/preview")
+async def import_preview(event_id: str, payload: ImportRowsIn, user=Depends(get_current_user)):
+    await _event_authz(event_id, user)
+    existing = await db.event_registrations.find({"event_id": event_id}, {"_id": 0}).to_list(10000)
+    by_email = {r.get("email", "").lower(): r for r in existing if r.get("email")}
+    by_phone = {re.sub(r"\D", "", r.get("phone") or ""): r for r in existing if r.get("phone")}
+    by_conf = {r.get("confirmation_number"): r for r in existing if r.get("confirmation_number")}
+    by_namebiz = {f"{(r.get('first_name') or '').lower()}|{(r.get('last_name') or '').lower()}|{(r.get('business_name') or '').lower()}": r for r in existing}
+    report = {"total": len(payload.rows), "valid": 0, "duplicates": 0, "missing_required": 0,
+              "invalid_emails": 0, "invalid_phones": 0, "skipped": 0, "records": []}
+    for idx, row in enumerate(payload.rows):
+        rec = _row_to_record(row, payload.mapping)
+        issues = []
+        if not (rec.get("first_name") and rec.get("last_name")):
+            issues.append("missing_required"); report["missing_required"] += 1
+        email = (rec.get("email") or "").lower()
+        if email and not _EMAIL_RE.match(email):
+            issues.append("invalid_email"); report["invalid_emails"] += 1
+        phone_d = re.sub(r"\D", "", rec.get("phone") or "")
+        if rec.get("phone") and len(phone_d) < 7:
+            issues.append("invalid_phone"); report["invalid_phones"] += 1
+        dup = None; dup_reason = None
+        if email and email in by_email: dup, dup_reason = by_email[email], "email"
+        elif phone_d and phone_d in by_phone: dup, dup_reason = by_phone[phone_d], "phone"
+        elif rec.get("confirmation_number") and rec["confirmation_number"] in by_conf: dup, dup_reason = by_conf[rec["confirmation_number"]], "confirmation_number"
+        elif f"{(rec.get('first_name') or '').lower()}|{(rec.get('last_name') or '').lower()}|{(rec.get('business_name') or '').lower()}" in by_namebiz and rec.get("first_name"):
+            dup, dup_reason = by_namebiz[f"{rec['first_name'].lower()}|{(rec.get('last_name') or '').lower()}|{(rec.get('business_name') or '').lower()}"], "name+business"
+        is_dup = bool(dup)
+        if is_dup: report["duplicates"] += 1
+        will_skip = ("missing_required" in issues) or ("invalid_email" in issues)
+        if will_skip: report["skipped"] += 1
+        elif not is_dup: report["valid"] += 1
+        report["records"].append({"row": idx + 1, "data": rec, "issues": issues, "is_duplicate": is_dup,
+                                   "duplicate_reason": dup_reason, "duplicate_id": dup.get("id") if dup else None})
+    return report
+
+
+@api_router.post("/events/{event_id}/import/commit")
+async def import_commit(event_id: str, payload: ImportRowsIn, user=Depends(get_current_user)):
+    ev = await _event_authz(event_id, user)
+    existing = await db.event_registrations.find({"event_id": event_id}, {"_id": 0}).to_list(10000)
+    by_email = {r.get("email", "").lower(): r for r in existing if r.get("email")}
+    by_phone = {re.sub(r"\D", "", r.get("phone") or ""): r for r in existing if r.get("phone")}
+    by_conf = {r.get("confirmation_number"): r for r in existing if r.get("confirmation_number")}
+    by_namebiz = {f"{(r.get('first_name') or '').lower()}|{(r.get('last_name') or '').lower()}|{(r.get('business_name') or '').lower()}": r for r in existing}
+    strat = payload.duplicate_strategy or "skip"
+    res = {"imported": 0, "updated": 0, "skipped": 0, "duplicates": 0, "failed": 0, "errors": []}
+    for idx, row in enumerate(payload.rows):
+        rec = _row_to_record(row, payload.mapping)
+        if not (rec.get("first_name") and rec.get("last_name")):
+            res["failed"] += 1; res["errors"].append({"row": idx + 1, "reason": "missing first/last name"}); continue
+        email = (rec.get("email") or "").lower()
+        if email and not _EMAIL_RE.match(email):
+            res["failed"] += 1; res["errors"].append({"row": idx + 1, "reason": "invalid email"}); continue
+        phone_d = re.sub(r"\D", "", rec.get("phone") or "")
+        dup = by_email.get(email) if email else None
+        if not dup and phone_d: dup = by_phone.get(phone_d)
+        if not dup and rec.get("confirmation_number"): dup = by_conf.get(rec["confirmation_number"])
+        if not dup and rec.get("first_name"):
+            dup = by_namebiz.get(f"{rec['first_name'].lower()}|{(rec.get('last_name') or '').lower()}|{(rec.get('business_name') or '').lower()}")
+        if dup:
+            res["duplicates"] += 1
+            if strat == "skip":
+                res["skipped"] += 1; continue
+            if strat == "update":
+                upd = {k: v for k, v in rec.items() if v not in (None, "")}
+                if "member_status" in upd: upd["is_member"] = upd["member_status"] == "Yes"
+                if "business_website" in upd: upd["business_website"] = normalize_website(upd["business_website"])
+                if "newsletter_opt_in" in upd: upd["newsletter_opt_in"] = _truthy(upd["newsletter_opt_in"])
+                if "events_opt_in" in upd: upd["events_opt_in"] = _truthy(upd["events_opt_in"])
+                upd["updated_by"] = user["name"]; upd["updated_at"] = now_iso()
+                await db.event_registrations.update_one({"id": dup["id"]}, {"$set": upd})
+                res["updated"] += 1; continue
+        is_member = rec.get("member_status") == "Yes"
+        pay = rec.get("payment_status") if rec.get("payment_status") in PAYMENT_STATUSES else "not_applicable"
+        reg = {"id": new_id("reg"), "event_id": event_id, "event_name": ev["name"],
+               "first_name": rec.get("first_name"), "last_name": rec.get("last_name"),
+               "name": f"{rec.get('first_name', '')} {rec.get('last_name', '')}".strip(),
+               "email": email, "phone": rec.get("phone"), "state": rec.get("state"), "city": rec.get("city"),
+               "zip_code": rec.get("zip_code"), "member_status": rec.get("member_status") or "Unknown", "is_member": is_member,
+               "business_name": rec.get("business_name"), "business_website": normalize_website(rec.get("business_website")),
+               "job_title": rec.get("job_title"), "ticket_category": rec.get("ticket_category") or "General Admission",
+               "badge_category": rec.get("badge_category") or ("Member" if is_member else "General Attendee"),
+               "internal_notes": rec.get("internal_notes"),
+               "newsletter_opt_in": _truthy(rec.get("newsletter_opt_in")), "events_opt_in": _truthy(rec.get("events_opt_in")),
+               "status": "registered", "checked_in": False, "confirmation_number": rec.get("confirmation_number") or gen_confirmation_number(),
+               "checkin_token": secrets.token_urlsafe(16), "source": "Bulk Import", "payment_status": pay, "payment_history": [],
+               "confirmation_sent": False, "resend_count": 0, "created_by": user["name"], "created_by_id": user["user_id"],
+               "created_at": now_iso(), "updated_at": now_iso()}
+        await db.event_registrations.insert_one(dict(reg))
+        await store_consents(reg, "Bulk Import")
+        if email: by_email[email] = reg
+        if phone_d: by_phone[phone_d] = reg
+        res["imported"] += 1
+    await log_audit(user, "registrations_imported", "event", event_id, {k: res[k] for k in ("imported", "updated", "skipped", "duplicates", "failed")})
+    return res
+
+
+def _segment_query(segment):
+    return {
+        "all": {}, "checked_in": {"checked_in": True}, "not_checked_in": {"checked_in": {"$ne": True}},
+        "walkins": {"source": "Walk-In"}, "manual": {"source": "Manual Entry"}, "online": {"source": "online"},
+        "imported": {"source": "Bulk Import"}, "members": {"is_member": True}, "nonmembers": {"is_member": {"$ne": True}},
+        "newsletter": {"newsletter_opt_in": True}, "events": {"events_opt_in": True},
+    }.get(segment, {})
+
+
+@api_router.get("/events/{event_id}/export")
+async def export_registrations(event_id: str, format: str = "csv", segment: str = "all", state: Optional[str] = None,
+                               category: Optional[str] = None, fields: Optional[str] = None, ids: Optional[str] = None,
+                               user=Depends(get_current_user)):
+    ev = await _event_authz(event_id, user)
+    if segment not in {"all", "checked_in", "not_checked_in", "walkins", "manual", "online", "imported", "members", "nonmembers", "newsletter", "events"}:
+        raise HTTPException(400, "Invalid segment")
+    is_staff = user["role"] in STAFF_ROLES
+    query = {"event_id": event_id, "archived": {"$ne": True}}
+    query.update(_segment_query(segment))
+    if state: query["state"] = state
+    if category: query["ticket_category"] = category
+    if ids: query["id"] = {"$in": ids.split(",")}
+    regs = await db.event_registrations.find(query, {"_id": 0}).sort("created_at", -1).to_list(10000)
+    sel = [f for f in (fields.split(",") if fields else EXPORT_FIELDS) if f in EXPORT_FIELDS]
+    if not is_staff:
+        sel = [f for f in sel if f not in CONTACT_FIELDS]
+    await log_audit(user, "registrations_exported", "event", event_id, {"segment": segment, "count": len(regs), "format": format})
+
+    def fmt(r, f):
+        v = r.get(f)
+        if f == "checked_in": return "Yes" if v else "No"
+        if f in ("newsletter_opt_in", "events_opt_in"): return "Yes" if v else "No"
+        if f == "member_status": return "Member" if r.get("is_member") else (r.get("member_status") or "No")
+        return "" if v is None else str(v)
+
+    if format == "xlsx":
+        from openpyxl import Workbook
+        wb = Workbook(); ws = wb.active; ws.title = "Registrations"
+        ws.append([f.replace("_", " ").title() for f in sel])
+        for r in regs: ws.append([fmt(r, f) for f in sel])
+        out = io.BytesIO(); wb.save(out); out.seek(0)
+        return StreamingResponse(out, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                 headers={"Content-Disposition": f"attachment; filename=registrations_{event_id}.xlsx"})
+    if format == "pdf":
+        from reportlab.lib.pagesizes import letter, landscape
+        from reportlab.lib import colors
+        from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+        from reportlab.lib.styles import getSampleStyleSheet
+        buf = io.BytesIO()
+        doc = SimpleDocTemplate(buf, pagesize=landscape(letter), topMargin=40, bottomMargin=30, leftMargin=24, rightMargin=24)
+        styles = getSampleStyleSheet()
+        pdf_fields = [f for f in sel if f in ("name", "email", "phone", "state", "ticket_category", "source", "confirmation_number", "payment_status", "checked_in")][:9]
+        head = [f.replace("_", " ").title() for f in pdf_fields]
+        rowsd = [head] + [[fmt(r, f) for f in pdf_fields] for r in regs]
+        story = [Paragraph(f"{ev['name']} — Attendee List ({len(regs)})", styles["Title"]), Spacer(1, 10)]
+        t = Table(rowsd, repeatRows=1)
+        t.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#2E3192")),
+                               ("TEXTCOLOR", (0, 0), (-1, 0), colors.white), ("FONTSIZE", (0, 0), (-1, -1), 7),
+                               ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#e2e8f0")),
+                               ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f8fafc")])]))
+        story.append(t); doc.build(story); buf.seek(0)
+        return StreamingResponse(buf, media_type="application/pdf",
+                                 headers={"Content-Disposition": f"attachment; filename=attendees_{event_id}.pdf"})
+    buf = io.StringIO(); w = csv.writer(buf)
+    w.writerow([f.replace("_", " ").title() for f in sel])
+    for r in regs: w.writerow([fmt(r, f) for f in sel])
+    return StreamingResponse(io.BytesIO(buf.getvalue().encode()), media_type="text/csv",
+                             headers={"Content-Disposition": f"attachment; filename=registrations_{event_id}.csv"})
+
+
+class BulkActionIn(BaseModel):
+    action: str
+    ids: List[str]
+    value: Optional[str] = None
+
+
+@api_router.post("/events/{event_id}/bulk")
+async def bulk_action(event_id: str, payload: BulkActionIn, user=Depends(get_current_user)):
+    ev = await _event_authz(event_id, user)
+    regs = await db.event_registrations.find({"event_id": event_id, "id": {"$in": payload.ids}}, {"_id": 0}).to_list(10000)
+    settings = await get_settings_doc()
+    a = payload.action; affected = 0
+    valid_actions = {"send_confirmation", "resend_confirmation", "change_category", "assign_badge_category", "mark_complimentary", "update_payment", "checkin", "cancel", "archive"}
+    if a not in valid_actions:
+        raise HTTPException(400, "Unknown bulk action")
+    if a in ("change_category", "assign_badge_category") and not payload.value:
+        raise HTTPException(400, "Value required")
+    if a == "update_payment" and payload.value not in PAYMENT_STATUSES:
+        raise HTTPException(400, "Invalid payment status")
+    for r in regs:
+        if a in ("send_confirmation", "resend_confirmation"):
+            asyncio.create_task(send_registration_confirmation(r, ev, settings, force=True))
+            await db.event_registrations.update_one({"id": r["id"]}, {"$inc": {"resend_count": 1}, "$set": {"last_resend_at": now_iso()}})
+        elif a == "change_category":
+            await db.event_registrations.update_one({"id": r["id"]}, {"$set": {"ticket_category": payload.value, "updated_at": now_iso()}})
+        elif a == "assign_badge_category":
+            await db.event_registrations.update_one({"id": r["id"]}, {"$set": {"badge_category": payload.value, "updated_at": now_iso()}})
+        elif a == "mark_complimentary":
+            await db.event_registrations.update_one({"id": r["id"]}, {"$set": {"payment_status": "complimentary", "updated_at": now_iso()}})
+        elif a == "update_payment":
+            await db.event_registrations.update_one({"id": r["id"]}, {"$set": {"payment_status": payload.value, "updated_at": now_iso()}})
+        elif a == "checkin":
+            prev = r.get("status") if r.get("status") != "checked_in" else r.get("prev_status", "registered")
+            await db.event_registrations.update_one({"id": r["id"]}, {"$set": {"checked_in": True, "prev_status": prev, "status": "checked_in", "checked_in_at": now_iso(), "checkin_method": "bulk", "checked_in_by": user["name"]}})
+        elif a == "cancel":
+            await db.event_registrations.update_one({"id": r["id"]}, {"$set": {"status": "cancelled", "checked_in": False, "cancelled_at": now_iso()}})
+        elif a == "archive":
+            await db.event_registrations.update_one({"id": r["id"]}, {"$set": {"archived": True}})
+        await log_audit(user, f"bulk_{a}", "registration", r["id"], {"value": payload.value})
+        affected += 1
+    await log_audit(user, f"bulk_{a}", "event", event_id, {"count": affected, "value": payload.value})
+    return {"ok": True, "action": a, "affected": affected}
+
+
 
 class EventReportIn(BaseModel):
     actual_attendance: Optional[int] = None

@@ -1,0 +1,58 @@
+{
+  "summary": "Phase C (registration import / bulk export / bulk actions) tested end-to-end. Backend: new pytest suite /app/backend/tests/test_phasec_import_export.py — 49/49 passing twice (idempotent): template header == IMPORT_FIELDS, CSV + XLSX parse & auto-mapping, preview validation report (missing_required / invalid_email / invalid_phone / duplicate by email, phone, confirmation_number), commit with all three duplicate strategies (skip / update / new) incl. re-run-same-file behaviour and derived fields (source 'Bulk Import', generated confirmation_number + checkin_token, is_member, normalized website, Yes/True/1 opt-ins, payment coercion), export csv/xlsx/pdf content-types + all 11 segments verified against the registration list + fields=/ids=/state=/category= filters, STAFF vs non-staff-owner contact-field gating (csv/xlsx/pdf all strip Email/Phone for the non-staff owner even when explicitly requested), every bulk action with DB re-read verification, bulk_<action> audit entries, and authz 401/403/404. Frontend: full Playwright run of Portal Events -> Registrations — import wizard (template download URL, CSV upload, prefilled mapping selects, preview counts Total3/Valid2/Missing required1/Will skip1, strategy select, result panel Imported2/Failed1 + row error, new rows appear with Source 'Bulk Import'), export dialog (11 segments, 20 field checkboxes, csv/xlsx/pdf buttons, correct download URL with format/segment/fields/ids), bulk bar + confirm dialog (action, affected count, event name, email note, value selects for category/badge/payment) and all 11 bulk entries incl. client-side Print Badges and Export Selected. All Phase C test data cleaned up; evt_246d20a66b31 and evt_badgetest left Approved+published.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/events/{id}/import/preview vs /import/commit", "issue": "Duplicate matchers differ: preview also matches on first+last+business ('name+business'), commit does not. A row preview flags as duplicate/skip can still be inserted by commit with strategy 'skip' — misleading validation report."},
+      {"endpoint": "POST /api/events/{id}/import/preview", "issue": "Rows with an invalid phone are counted in 'valid' and are imported by commit (no phone validation there), so 'Invalid phones' in the report has no effect on the outcome."},
+      {"endpoint": "POST /api/events/{id}/bulk", "issue": "Unknown action or invalid 'value' (e.g. update_payment value='not_a_status') returns 200 {ok:true, affected:0} instead of 400; UI then shows a green '0 updated' toast."},
+      {"endpoint": "POST /api/events/{id}/bulk", "issue": "Only one aggregate audit entry is written with related_type='event'; nothing is written per registration, so bulk category/payment/checkin/cancel changes never show up in a registration's Activity History (GET /api/registrations/{id}/history filters related_type='registration')."},
+      {"endpoint": "GET /api/events/{id}/export", "issue": "Unknown segment value silently falls back to exporting everything (_segment_query .get(segment, {})) instead of 400."},
+      {"endpoint": "PUT /api/registrations/{id}/payment", "issue": "PRE-EXISTING (Phase A): response is read before the fire-and-forget confirmation task runs, so it returns confirmation_sent=false even when the confirmation is sent (DB flag flips ~1s later). Causes 3 regression failures in test_phasea_registrations.py::TestPaidFlow and test_phaseb_regmgmt.py::test_manual_no_auto_confirmation_email."},
+      {"endpoint": "email sandbox", "issue": "delivered@resend.dev intermittently logs status 'failed' with 'Provider did not return a message id' (seen right after bulk resends — looks like provider rate limiting). Makes email-status assertions flaky; not a Phase C defect."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "EventManage dialog / RegistrationTable", "issue": "HIGH: the registration table forces the modal content wider than the DialogContent (which is overflow-x-hidden), so the toolbar buttons and the right-hand table columns are rendered OUTSIDE the dialog and are unreachable for a real user. Measured at 1920x1080: dialog right edge 1536 but import-btn 1658-1748, export-btn 1756-1846, add-manual-btn 1854-2042, row Actions button right 2014 — all clipped=true. Same at 1440x900. Playwright can still click them only because it scrolls programmatically. Suggested fix: add min-w-0 w-full max-w-full to the RegistrationTable root div (and to the Tabs/TabsContent wrapper) so the overflow-x-auto table wrapper shrinks to the dialog width.", "selector": "[data-testid=\"import-btn\"], [data-testid=\"export-btn\"], [data-testid=\"add-manual-btn\"], [data-testid^=\"actions-\"]", "priority": "HIGH"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "EventManage / Import / Export / Bulk dialogs", "issues": ["Console warning on every dialog: 'Missing Description or aria-describedby={undefined} for DialogContent' (a11y)", "Bulk confirm dialog for destructive actions (Cancel / Archive) uses the same magenta Confirm button as benign actions — no destructive styling"]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_phasec_import_export.py",
+    "/app/backend/tests/seed_phasec.py",
+    "/app/backend/tests/cleanup_phasec.py",
+    "/app/backend/tests/probe_payment_flag.py",
+    "/app/test_reports/pytest/phasec_results.xml"
+  ],
+  "action_items": [
+    "Fix modal overflow so Import/Export/Add Manual Registration and the row Actions/Print columns stay inside the Manage dialog (add min-w-0/w-full to the RegistrationTable root + tab content).",
+    "Align duplicate detection between import/preview and import/commit (commit is missing the name+business matcher).",
+    "Return 400 from /bulk for unknown action or invalid value instead of 200 affected:0.",
+    "Write per-registration audit entries for bulk actions so they appear in registration Activity History.",
+    "Decide what an invalid phone should do on import (currently counted but ignored by commit).",
+    "PRE-EXISTING: re-read the registration after the confirmation send (or return the computed flag) in PUT /registrations/{id}/payment so confirmation_sent is accurate — currently fails 3 Phase A/B regression tests."
+  ],
+  "critical_code_review_comments": [
+    "server.py is 2475 lines — split into routers (events, registrations, import/export, badges) per the >700-line guideline.",
+    "import/parse trusts client-supplied rows for preview/commit (rows are echoed back and re-posted); a caller can post arbitrary rows — acceptable since the endpoint is staff/owner gated, but the 2000-row parse cap is not enforced on commit, so an oversized commit payload is possible.",
+    "export_registrations loads up to 10000 registrations plus builds the whole CSV/XLSX/PDF in memory; fine for current scale, worth streaming later.",
+    "Bulk actions issue one update_one per registration inside a Python loop — use bulk_write/update_many for the non-email actions."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_phasec_import_export.py",
+    "/app/backend/tests/seed_phasec.py",
+    "/app/backend/tests/cleanup_phasec.py",
+    "/app/backend/tests/probe_payment_flag.py"
+  ],
+  "success_rate": {"backend": "100% (49/49 Phase C); Phase A/B regression 69/72 (3 pre-existing email/confirmation-flag failures)", "frontend": "100% of Phase C flows functional, 1 HIGH layout bug"},
+  "seed_data_creation": "seed_phasec.py creates temporary event evt_phasec_owner (owner user_memba, non-staff) + reg reg_phasec_owner1 for the export contact-gating test. cleanup_phasec.py deletes it plus all 'Bulk Import' and TEST_* registrations — already executed, DB left clean (evt_246d20a66b31 has only the 3 original seeded regs; both events still Approved+published).",
+  "should_call_test_agent_after_fix": true,
+  "should_main_agent_self_test": false,
+  "test_credentials": "Bearer tok_admtest (super_admin, event owner) / Bearer tok_memba (non-owner ambassador). Browser: cookie session_token=tok_admtest on ambassador-hub-29.preview.emergentagent.com.",
+  "context_for_next_testing_agent": "Run `python /app/backend/tests/seed_badge.py && python /app/backend/tests/seed_phasea.py && python /app/backend/tests/seed_phasec.py` before test_phasec_import_export.py, and `python /app/backend/tests/cleanup_phasec.py` afterwards. IMPORTANT: run Phase C tests with `-n 0` — pytest.ini uses xdist and the per-module random TAG differs per worker, which breaks the shared-state import/bulk tests. Phase C backend is fully green; retest after the modal-overflow fix (verify import-btn/export-btn/add-manual-btn/actions bounding boxes are inside the [role=dialog] rect) and after the preview/commit duplicate-matcher alignment.",
+  "rca_of_the_issue": "Modal clipping: DialogContent (max-w-6xl, overflow-x-hidden) lays out its children in a grid, so the RegistrationTable block takes its min-content width from the wide <table>; the sibling toolbar flex row then stretches to that width and everything past the dialog's right edge is clipped with no way for the user to scroll (overflow-x:hidden). Confirmed by getBoundingClientRect at 1920 and 1440 viewports. Payment-flag issue: PUT /registrations/{id}/payment does find_one before asyncio.create_task(send_registration_confirmation(...)), so the returned document predates the confirmation_sent update (verified with probe_payment_flag.py: response false, DB true after ~1s)."
+}

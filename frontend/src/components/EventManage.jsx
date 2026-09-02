@@ -26,10 +26,10 @@ export const EventManage = ({ event, onClose }) => {
       <DialogContent className="max-w-6xl max-h-[92vh] overflow-y-auto overflow-x-hidden">
         <DialogHeader><DialogTitle>Manage — {event.name}</DialogTitle></DialogHeader>
         <div className="flex gap-4 text-sm text-slate-500 mb-2"><span className="flex items-center gap-1"><Users size={14} /> {data.total} registered</span><span className="flex items-center gap-1"><CheckCircle2 size={14} /> {data.checked_in} checked in</span></div>
-        <Tabs defaultValue="registrations">
+        <Tabs defaultValue="registrations" className="min-w-0 w-full">
           <TabsList><TabsTrigger value="registrations">Registrations</TabsTrigger><TabsTrigger value="checkin">Check-In</TabsTrigger><TabsTrigger value="badges">Badge Center</TabsTrigger></TabsList>
 
-          <TabsContent value="registrations">
+          <TabsContent value="registrations" className="min-w-0">
             <RegistrationTable event={event} onMutate={load} />
           </TabsContent>
 

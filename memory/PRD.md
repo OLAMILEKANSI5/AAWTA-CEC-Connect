@@ -86,3 +86,11 @@ Part of a 7-phase event-management overhaul (A→G). Decisions: paid events use 
 - BadgeCenter now exports `printBadges(regs,event,{w,h})` (reused by row Print).
 - Verified: iteration_9 (48/50 backend, all frontend flows) + post-fix self-test (walk-in 400, manual invalid-payment 400, `+`-search, field clearing). Fixed: regex escape, walk-in contact validation, manual payment validation, editable clearing, Manage-dialog horizontal-overflow clipping, payment labels, `<span>`-in-`<option>`, Show Archived toggle.
 - Deferred to Phase C: bulk-action bar for the existing row checkboxes.
+
+## Implemented (2026-06, Phase C — Import / Export / Bulk Actions)
+- CSV/XLSX import: GET import-template.csv; POST import/parse (auto column mapping), import/preview (validation report: total/valid/duplicates/missing_required/invalid_emails/invalid_phones/skipped; dup by email/phone/confirmation#/name+business), import/commit (strategy skip|update|new, source "Bulk Import", derived fields). Frontend ImportDialog wizard (upload→map→preview→result).
+- Export: GET /events/{id}/export?format=csv|xlsx|pdf&segment=&fields=&ids=&state=&category=. 11 segments, field selection, print-ready PDF attendee list. STAFF-only gating strips email/phone for non-staff owners. Frontend ExportDialog.
+- Bulk actions: POST /events/{id}/bulk {action, ids, value} — send/resend confirmation, change_category, assign_badge_category, mark_complimentary, update_payment, checkin, cancel, archive (+client-side print badges / export selected). 400 on unknown action/invalid value/segment. Per-registration audit written (shows in Activity History). Frontend bulk bar + BulkConfirmDialog (shows action/count/event/email note, destructive styling).
+- Fixed pre-existing: PUT /registrations/{id}/payment now returns accurate confirmation_sent (awaits send + re-reads). Fixed HIGH Manage-dialog horizontal overflow (min-w-0 on RegistrationTable root + Tabs/TabsContent) so toolbar/columns stay inside the dialog.
+- Verified: iteration_10 (49/49 Phase C backend, all frontend flows) + post-fix self-test (400s, payment flag accurate, bulk per-reg audit, modal buttons inside dialog).
+- Deferred/minor (non-blocking): invalid-phone rows are warned but still importable; streaming for very large exports.
