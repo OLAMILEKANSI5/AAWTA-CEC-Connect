@@ -34,6 +34,7 @@ export const EventManage = ({ event, onClose }) => {
           </TabsContent>
 
           <TabsContent value="checkin">
+            <a href={`/portal/events/${event.id}/checkin`} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-sm text-brand-magenta font-medium mb-3" data-testid="open-checkin-center">Open full Check-In Center →</a>
             <div className="bg-slate-50 rounded-lg p-3 mb-3">
               <p className="text-xs font-semibold text-slate-500 mb-2">Register Walk-In</p>
               <div className="grid grid-cols-2 md:grid-cols-3 gap-2 items-end">

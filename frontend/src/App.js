@@ -34,6 +34,7 @@ import Documents from "@/pages/portal/Documents";
 import Messages from "@/pages/portal/Messages";
 import Announcements from "@/pages/portal/Announcements";
 import Events from "@/pages/portal/Events";
+import CheckInCenter from "@/pages/portal/CheckInCenter";
 import Goals from "@/pages/portal/Goals";
 import ResourceCenter from "@/pages/portal/ResourceCenter";
 import Reports from "@/pages/portal/Reports";
@@ -110,6 +111,7 @@ function AppRouter() {
       <Route path="/portal/messages" element={<ProtectedRoute><Messages /></ProtectedRoute>} />
       <Route path="/portal/announcements" element={<ProtectedRoute><Announcements /></ProtectedRoute>} />
       <Route path="/portal/events" element={<ProtectedRoute><Events /></ProtectedRoute>} />
+      <Route path="/portal/events/:id/checkin" element={<ProtectedRoute><CheckInCenter /></ProtectedRoute>} />
       <Route path="/portal/goals" element={<ProtectedRoute><Goals /></ProtectedRoute>} />
       <Route path="/portal/resources" element={<ProtectedRoute><ResourceCenter /></ProtectedRoute>} />
       <Route path="/portal/reports" element={<ProtectedRoute roles={STAFF}><Reports /></ProtectedRoute>} />

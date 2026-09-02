@@ -1,0 +1,53 @@
+{
+  "summary": "Phase D (Mobile Check-In Center + Badge Center) full-matrix test. Backend: 30 new pytest cases in /app/backend/tests/test_phased_checkin_badges.py — all 30 PASS (get_event incl. 404/401, lookup found/404/401/403, QR check-in + already_checked_in guard, badge-config save+persist+authz, badges PDF (page count + exact mediabox), ZIP (1 PDF/reg), all 5 sizes 4x6/4x3/3.5x2/2.25x3.5/custom 5.5x4.25, badge_status='printed' + badge_print_count increment + badge_printed_at, only_unprinted -> 400 empty, checked_in_only count match, empty-selection 400, badges_generated audit verified via /api/audit-logs, manual-pdf single page + no DB write + 422 validation + 403/401). Frontend (430x920 mobile): Check-In Center loads, progress bar, start-scan-btn enabled, token-input -> found-dialog -> confirm-checkin works, invalid token toasts 'Registration not found', search -> results -> Check In works, token of a checked-in attendee -> already-checked-in warning (time + by) + Check In Again works, walk-in dialog validations (first name / email-or-phone) + creation + badge print popup. Badge Center (desktop): all 5 size presets, custom W/H, live preview, manual add, Download PDF (19733 bytes, %PDF header), Download ZIP (3 entries, one PDF per reg), per-attendee print popup, open-checkin-center link. ONE real backend bug found: checked_in counter ignores archived/cancelled rows, so UI shows '4 / 3 checked in — 133%'.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "GET /api/events/{id}/registrations", "issue": "`checked_in` count uses {event_id, checked_in: true} with no archived/cancelled filter, while `total` excludes archived+cancelled. An archived checked-in reg (reg_8e7bbda50685 'Manual Person') makes checked_in > total, so Check-In Center header shows '4 / 3 checked in' and the progress bar renders 133%. Fix: count_documents({event_id, checked_in: True, archived: {$ne: True}, status: {$ne: 'cancelled'}}).", "priority": "HIGH"}
+    ],
+    "minor": [
+      {"endpoint": "GET /api/events/{id}", "issue": "Spec says staff-or-owner only, but implementation also returns 200 to any authenticated non-owner for public/Approved/Scheduled/Completed events (verified: tok_memba -> 200 for evt_246d20a66b31). Intentional? If so update spec; if not tighten authz."},
+      {"endpoint": "POST /api/events/{id}/badges/pdf", "issue": "badge_status is flipped to 'printed' and badge_print_count incremented even when the client only previews/downloads and never prints; no way to generate without mutating print state (no dry_run flag)."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "CheckInCenter header", "issue": "Live totals show checked_in > total (e.g. '4 / 3 checked in') and progress bar/percentage exceed 100% (133%) because of the backend counter bug above. Same wrong numbers show in EventManage header ('3 registered / 4 checked in').", "selector": "[data-testid=\"checkin-total\"]", "priority": "HIGH"},
+      {"component": "CheckInCenter search results", "issue": "Already-checked-in rows render a static 'In' label with no tap target, so the spec'd flow 'tapping an already-checked-in attendee opens found-dialog with already-checked-in + confirm-recheckin' is NOT reachable from search (only via token/QR). checkinRow() already handles r.checked_in — just render a tappable button/row for checked-in attendees.", "selector": "[data-testid^=\"checkin-result-\"]", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [
+      {"flow": "Badge Center — event badge/contact config & 12 category colors", "issue": "Backend PUT /api/events/{id}/badge-config and the 12-category color map exist and work, but there is NO frontend UI to edit address/website/contact_email/contact_phone/show_phone or category colors (grep: no reference to 'badge-config'/'category_colors' anywhere in /app/frontend/src). Phase D requirement 'event badge/contact config + 12 categories with custom colors' is backend-only.", "affected_selectors": ["[data-testid=\"badge-center\"]"]},
+      {"flow": "Badge Center manual badge", "issue": "Manual add is client-side print only; POST /api/events/{id}/badges/manual-pdf (server print-ready PDF for a non-registered person) is never called from the UI.", "affected_selectors": ["[data-testid=\"badge-add-manual\"]"]},
+      {"flow": "Client print vs server PDF parity", "issue": "Client-side print/preview (badgeMarkup) derives the role pill from registration.status (roleLabel) and always uses magenta; it ignores badge_category and the configured category_colors, and omits the QR code — so printed badges differ from the server PDF for the same attendee.", "affected_selectors": ["[data-testid=\"badge-preview\"]", "[data-testid=\"print-all-badges\"]"]}
+    ],
+    "design_issues": [
+      {"screen": "EventManage dialog tabs", "issues": ["Tabs (Registrations / Check-In / Badge Center) have no data-testid; had to select by ARIA role."]},
+      {"screen": "Dialogs (found-dialog, walkin-dialog)", "issues": ["React a11y console warning: 'Missing Description or aria-describedby for DialogContent' on every dialog open."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_phased_checkin_badges.py",
+    "/app/test_reports/pytest/phased.xml"
+  ],
+  "action_items": [
+    "FIX (HIGH): scope the checked_in counter in list_registrations to non-archived, non-cancelled rows so Check-In Center totals/progress never exceed 100%.",
+    "FIX (MED): make already-checked-in rows tappable in Check-In Center search so the duplicate-check-in warning dialog is reachable without QR/token.",
+    "ADD: Badge Center UI for badge_config (address/website/contact email/phone/show_phone) and the 12 category colors; wire manual entries to /badges/manual-pdf.",
+    "ALIGN: client print markup should use badge_category + configured colors (+QR) to match server PDF output.",
+    "Add data-testid to EventManage tab triggers; add DialogDescription/aria-describedby to dialogs.",
+    "Decide intended authz for GET /api/events/{id} (currently readable by any authenticated user for approved/public events)."
+  ],
+  "critical_code_review_comments": [
+    "list_registrations: `total` and `checked_in` use inconsistent filters — single source of truth needed (same query base for both counts).",
+    "badges_pdf mutates print state (badge_status/badge_print_count) before the response is streamed; if PDF generation raised, rows would be wrongly marked printed. Generate first, then update.",
+    "BadgeCenter.jsx duplicates the print HTML/CSS generation in both the exported printBadges() and the internal print() (lines 51-59 and 90-97) — extract one helper (DRY).",
+    "server.py is 2640 lines — split registrations/badges/check-in routers into modules."
+  ],
+  "updated_files": ["/app/backend/tests/test_phased_checkin_badges.py"],
+  "success_rate": {"backend": "100% (30/30 pytest)", "frontend": "~90% (all Phase D flows work; totals counter wrong + already-checked-in not tappable from search + badge-config/manual-pdf UI missing)"},
+  "seed_data_creation": "Ran seed_badge.py and seed_phasea.py. Created and then DELETED test walk-in qawalkin.phased@example.com. Cleared the QA-written badge_config from evt_246d20a66b31. Both events left published. Note: reg_f589b12de7fa and reg_777b5adda7a1 are now checked_in and badge_status='printed' from testing.",
+  "should_call_test_agent_after_fix": true,
+  "should_main_agent_self_test": false,
+  "test_credentials": "cookie/Bearer tok_admtest (super_admin, event owner); tok_memba (non-owner ambassador, 403 checks). Events: evt_246d20a66b31 (use this), evt_badgetest.",
+  "context_for_next_testing_agent": "Backend Phase D suite is /app/backend/tests/test_phased_checkin_badges.py — run with `-n 0 -p no:randomly` (tests are order-dependent: only_unprinted expects everything already printed) and pypdf is now installed for page/mediabox assertions. evt_246d20a66b31 has an ARCHIVED checked-in registration (reg_8e7bbda50685 'Manual Person') which is what exposes the checked_in>total counter bug — keep it to verify the fix. For frontend, add cookie session_token=tok_admtest on ambassador-hub-29.preview.emergentagent.com before goto; camera QR cannot be tested headless, use token-input (tokens: Delivered Tester / Walk In — fetch via GET /api/events/evt_246d20a66b31/registrations). To re-test 'search check-in' you must first uncheck a reg via PUT /api/registrations/{id}/checkin {checked_in:false}.",
+  "rca_of_the_issue": "Check-In totals bug: GET /api/events/{id}/registrations computes total = count({event_id, archived != true, status != cancelled}) but checked_in = count({event_id, checked_in: true}) with no archived/cancelled exclusion. evt_246d20a66b31 contains an archived checked-in registration, so checked_in (3) > total (2), which CheckInCenter renders as '3 / 2 checked in' and pct = round(checked_in/total*100) = 150%+. Reproduce: GET the endpoint for evt_246d20a66b31 -> {'total': 2, 'filtered': 2, 'checked_in': 3}. Mitigation: apply the same archived/cancelled filter to the checked_in count."
+}

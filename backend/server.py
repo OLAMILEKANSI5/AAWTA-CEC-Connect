@@ -1102,6 +1102,16 @@ async def list_events(user=Depends(get_current_user)):
         q = {"$or": [{"public": True}, {"submitted_by_id": user["user_id"]}, {"status": {"$in": ["Approved", "Scheduled", "Completed"]}}]}
     return await db.events.find(q, {"_id": 0}).sort("date", 1).to_list(1000)
 
+
+@api_router.get("/events/{event_id}")
+async def get_event(event_id: str, user=Depends(get_current_user)):
+    ev = await db.events.find_one({"id": event_id}, {"_id": 0})
+    if not ev: raise HTTPException(404, "Not found")
+    if user["role"] not in STAFF_ROLES and ev.get("submitted_by_id") != user["user_id"] and not ev.get("public") and ev.get("status") not in ("Approved", "Scheduled", "Completed"):
+        raise HTTPException(403, "Forbidden")
+    ev["registered_count"] = await db.event_registrations.count_documents({"event_id": event_id, "status": {"$in": ["registered", "checked_in", "walkin"]}})
+    return ev
+
 @api_router.put("/events/{event_id}/status")
 async def update_event_status(event_id: str, payload: Dict[str, Any], user=Depends(require_roles(*STAFF_ROLES))):
     status = payload.get("status")
@@ -1407,7 +1417,7 @@ async def list_registrations(event_id: str, q: Optional[str] = None, state: Opti
     regs = await db.event_registrations.find(query, {"_id": 0}).sort("created_at", -1).to_list(5000)
     all_active = await db.event_registrations.count_documents({"event_id": event_id, "archived": {"$ne": True}, "status": {"$ne": "cancelled"}})
     return {"registrations": regs, "total": all_active, "filtered": len(regs),
-            "checked_in": await db.event_registrations.count_documents({"event_id": event_id, "checked_in": True})}
+            "checked_in": await db.event_registrations.count_documents({"event_id": event_id, "checked_in": True, "archived": {"$ne": True}, "status": {"$ne": "cancelled"}})}
 
 
 class ManualRegistrationIn(BaseModel):
@@ -1902,6 +1912,150 @@ async def bulk_action(event_id: str, payload: BulkActionIn, user=Depends(get_cur
         affected += 1
     await log_audit(user, f"bulk_{a}", "event", event_id, {"count": affected, "value": payload.value})
     return {"ok": True, "action": a, "affected": affected}
+
+
+
+BADGE_COLORS = {"General Attendee": "#64748b", "Member": "#2E3192", "VIP": "#D6189B", "Speaker": "#7c3aed",
+                "Sponsor": "#059669", "Exhibitor": "#0891b2", "Partner": "#ca8a04", "Media": "#dc2626",
+                "Volunteer": "#0d9488", "Ambassador": "#db2777", "Staff": "#475569", "Walk-In": "#f59e0b", "Guest": "#64748b"}
+
+
+def _badge_colors(event):
+    return {**BADGE_COLORS, **((event.get("badge_config") or {}).get("category_colors") or {})}
+
+
+def _badges_pdf_bytes(regs, event, w, h, colors_map):
+    from reportlab.lib.units import inch
+    from reportlab.lib import colors as rc
+    from reportlab.lib.utils import ImageReader
+    from reportlab.pdfgen import canvas as pdfcanvas
+    import qrcode
+    buf = io.BytesIO()
+    W, H = w * inch, h * inch
+    c = pdfcanvas.Canvas(buf, pagesize=(W, H))
+    cfg = event.get("badge_config") or {}
+    for reg in regs:
+        cat = reg.get("badge_category") or "General Attendee"
+        col = rc.HexColor(colors_map.get(cat, "#64748b"))
+        barh = 0.12 * H
+        c.setFillColor(rc.HexColor("#2E3192")); c.rect(0, H - barh, W, barh, fill=1, stroke=0)
+        c.setFillColor(col); c.rect(0, 0, W, 0.05 * H, fill=1, stroke=0)
+        cx = W / 2
+        c.setFillColor(rc.white); c.setFont("Helvetica-Bold", max(7, w * 3.2)); c.drawCentredString(cx, H - barh * 0.68, "AAWTA CEC")
+        y = H - barh - 0.4 * inch
+        name = reg.get("name") or ""
+        nsize = w * 7
+        c.setFont("Helvetica-Bold", nsize)
+        while nsize > 6 and c.stringWidth(name, "Helvetica-Bold", nsize) > W - 0.3 * inch:
+            nsize -= 1; c.setFont("Helvetica-Bold", nsize)
+        c.setFillColor(rc.HexColor("#0f172a")); c.drawCentredString(cx, y, name)
+        y -= 0.32 * inch
+        psize = max(6, w * 2.6)
+        pill_w = c.stringWidth(cat.upper(), "Helvetica-Bold", psize) + 0.26 * inch
+        c.setFillColor(col); c.roundRect(cx - pill_w / 2, y - 0.04 * inch, pill_w, psize + 0.13 * inch, 5, fill=1, stroke=0)
+        c.setFillColor(rc.white); c.setFont("Helvetica-Bold", psize); c.drawCentredString(cx, y + 0.02 * inch, cat.upper())
+        y -= 0.32 * inch
+        if reg.get("business_name"):
+            c.setFillColor(rc.HexColor("#334155")); c.setFont("Helvetica", max(6, w * 2.4)); c.drawCentredString(cx, y, str(reg["business_name"])[:42]); y -= 0.17 * inch
+        if reg.get("business_website"):
+            c.setFillColor(rc.HexColor("#64748b")); c.setFont("Helvetica", max(5, w * 2)); c.drawCentredString(cx, y, str(reg["business_website"])[:42]); y -= 0.15 * inch
+        token = reg.get("checkin_token")
+        if token:
+            qimg = qrcode.make(token); bio = io.BytesIO(); qimg.save(bio, format="PNG"); bio.seek(0)
+            qs = min(1.2 * inch, 0.26 * H)
+            c.drawImage(ImageReader(bio), cx - qs / 2, 0.13 * H, qs, qs, mask="auto")
+        c.setFillColor(rc.HexColor("#334155")); c.setFont("Helvetica-Bold", max(6, w * 2.2))
+        c.drawCentredString(cx, 0.09 * H, (event.get("name") or "")[:46])
+        footer = " · ".join([x for x in [cfg.get("website") or "aawta.org", cfg.get("contact_email"), (cfg.get("contact_phone") if cfg.get("show_phone") else None)] if x])
+        if footer:
+            c.setFillColor(rc.HexColor("#94a3b8")); c.setFont("Helvetica", max(4, w * 1.5)); c.drawCentredString(cx, 0.065 * H, footer[:60])
+        c.showPage()
+    c.save(); buf.seek(0)
+    return buf.getvalue()
+
+
+class BadgeConfigIn(BaseModel):
+    default_w: Optional[float] = 4
+    default_h: Optional[float] = 6
+    address: Optional[str] = None
+    website: Optional[str] = None
+    contact_email: Optional[str] = None
+    contact_phone: Optional[str] = None
+    show_phone: bool = False
+    category_colors: Dict[str, str] = {}
+
+
+@api_router.put("/events/{event_id}/badge-config")
+async def set_badge_config(event_id: str, payload: BadgeConfigIn, user=Depends(get_current_user)):
+    await _event_authz(event_id, user)
+    await db.events.update_one({"id": event_id}, {"$set": {"badge_config": payload.model_dump()}})
+    await log_audit(user, "badge_config_updated", "event", event_id)
+    return payload.model_dump()
+
+
+class BadgePdfIn(BaseModel):
+    ids: List[str] = []
+    w: float = 4
+    h: float = 6
+    combined: bool = True
+    only_unprinted: bool = False
+    checked_in_only: bool = False
+
+
+@api_router.post("/events/{event_id}/badges/pdf")
+async def badges_pdf(event_id: str, payload: BadgePdfIn, user=Depends(get_current_user)):
+    ev = await _event_authz(event_id, user)
+    q = {"event_id": event_id, "archived": {"$ne": True}, "status": {"$ne": "cancelled"}}
+    if payload.ids: q["id"] = {"$in": payload.ids}
+    if payload.checked_in_only: q["checked_in"] = True
+    if payload.only_unprinted: q["badge_status"] = {"$ne": "printed"}
+    regs = await db.event_registrations.find(q, {"_id": 0}).sort("name", 1).to_list(10000)
+    if not regs: raise HTTPException(400, "No registrations to badge")
+    colors_map = _badge_colors(ev)
+    ids = [r["id"] for r in regs]
+    if payload.combined:
+        out = io.BytesIO(_badges_pdf_bytes(regs, ev, payload.w, payload.h, colors_map)); media = "application/pdf"; fn = f"badges_{event_id}.pdf"
+    else:
+        import zipfile
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+            for r in regs:
+                nm = re.sub(r"[^A-Za-z0-9_]", "", (r.get("name") or r["id"]).replace(" ", "_")) or r["id"]
+                z.writestr(f"{nm}_{r['id'][-4:]}.pdf", _badges_pdf_bytes([r], ev, payload.w, payload.h, colors_map))
+        buf.seek(0); out = buf; media = "application/zip"; fn = f"badges_{event_id}.zip"
+    await db.event_registrations.update_many({"id": {"$in": ids}}, {"$set": {"badge_status": "printed", "badge_printed_at": now_iso()}, "$inc": {"badge_print_count": 1}})
+    await log_audit(user, "badges_generated", "event", event_id, {"count": len(regs), "combined": payload.combined})
+    return StreamingResponse(out, media_type=media, headers={"Content-Disposition": f"attachment; filename={fn}"})
+
+
+class ManualBadgeIn(BaseModel):
+    first_name: str
+    last_name: Optional[str] = ""
+    business_name: Optional[str] = None
+    business_website: Optional[str] = None
+    badge_category: Optional[str] = "Guest"
+    confirmation_number: Optional[str] = None
+    w: float = 4
+    h: float = 6
+
+
+@api_router.post("/events/{event_id}/badges/manual-pdf")
+async def manual_badge_pdf(event_id: str, payload: ManualBadgeIn, user=Depends(get_current_user)):
+    ev = await _event_authz(event_id, user)
+    reg = {"name": f"{payload.first_name} {payload.last_name or ''}".strip(), "business_name": payload.business_name,
+           "business_website": normalize_website(payload.business_website), "badge_category": payload.badge_category, "checkin_token": None}
+    pdf = _badges_pdf_bytes([reg], ev, payload.w, payload.h, _badge_colors(ev))
+    return StreamingResponse(io.BytesIO(pdf), media_type="application/pdf", headers={"Content-Disposition": "attachment; filename=badge.pdf"})
+
+
+@api_router.get("/registrations/lookup")
+async def lookup_registration(token: str, user=Depends(get_current_user)):
+    reg = await db.event_registrations.find_one({"checkin_token": token}, {"_id": 0})
+    if not reg: raise HTTPException(404, "Registration not found")
+    ev = await db.events.find_one({"id": reg["event_id"]}, {"_id": 0})
+    if user["role"] not in STAFF_ROLES and (not ev or ev.get("submitted_by_id") != user["user_id"]):
+        raise HTTPException(403, "Forbidden")
+    return {"registration": reg, "already_checked_in": bool(reg.get("checked_in")), "checked_in_at": reg.get("checked_in_at"), "checked_in_by": reg.get("checked_in_by")}
 
 
 

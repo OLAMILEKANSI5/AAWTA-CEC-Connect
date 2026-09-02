@@ -1,19 +1,21 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
+import { api } from "@/auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Printer, UserPlus, X } from "lucide-react";
+import { Printer, UserPlus, X, FileDown, Archive } from "lucide-react";
 
 const PRESETS = [
   { key: "4x6", label: "4 × 6 in", w: 4, h: 6 },
-  { key: "3x4", label: "3 × 4 in", w: 3, h: 4 },
-  { key: "2.5x3.5", label: "2.5 × 3.5 in", w: 2.5, h: 3.5 },
   { key: "4x3", label: "4 × 3 in", w: 4, h: 3 },
+  { key: "3.5x2", label: "3.5 × 2 in", w: 3.5, h: 2 },
+  { key: "2.25x3.5", label: "2.25 × 3.5 in", w: 2.25, h: 3.5 },
   { key: "custom", label: "Custom", w: 4, h: 6 },
 ];
 
 const fmtDate = (s) => (s ? new Date(s + "T00:00").toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" }) : "");
 const roleLabel = (st) => ({ registered: "Attendee", checked_in: "Attendee", walkin: "Walk-In", waitlist: "Waitlist", guest: "Guest", staff: "Staff", speaker: "Speaker", volunteer: "Volunteer" }[st] || "Attendee");
+const BADGE_CAT_COLORS = { "General Attendee": "#64748b", Member: "#2E3192", VIP: "#D6189B", Speaker: "#7c3aed", Sponsor: "#059669", Exhibitor: "#0891b2", Partner: "#ca8a04", Media: "#dc2626", Volunteer: "#0d9488", Ambassador: "#db2777", Staff: "#475569", "Walk-In": "#f59e0b", Guest: "#64748b" };
 
 const badgeMarkup = (r, event, w, h) => `
   <div class="badge" style="width:${w}in;height:${h}in;">
@@ -22,7 +24,8 @@ const badgeMarkup = (r, event, w, h) => `
       <div class="org">AAWTA <span class="cec">CEC</span></div>
       <div class="tag">Community Engagement Committee</div>
       <div class="nm">${(r.name || "").replace(/</g, "&lt;")}</div>
-      <div class="role">${roleLabel(r.status)}</div>
+      <div class="role" style="background:${BADGE_CAT_COLORS[r.badge_category] || "#D6189B"}">${((r.badge_category || roleLabel(r.status)) + "").replace(/</g, "&lt;")}</div>
+      ${r.business_name ? `<div class="ev">${(r.business_name + "").replace(/</g, "&lt;")}</div>` : ""}
       <div class="spacer"></div>
       <div class="ev">${(event.name || "").replace(/</g, "&lt;")}</div>
       <div class="dt">${fmtDate(event.date)}${event.city ? " · " + event.city : ""}</div>
@@ -66,10 +69,31 @@ export const BadgeCenter = ({ event, registrations }) => {
   const [mName, setMName] = useState("");
   const [mRole, setMRole] = useState("guest");
   const [previewId, setPreviewId] = useState(null);
+  const [cfg, setCfg] = useState(event.badge_config || {});
+  const [showCfg, setShowCfg] = useState(false);
+  useEffect(() => { setCfg(event.badge_config || {}); }, [event.badge_config]);
 
   const preset = PRESETS.find((p) => p.key === sizeKey) || PRESETS[0];
   const w = sizeKey === "custom" ? Number(cw) || 4 : preset.w;
   const h = sizeKey === "custom" ? Number(ch) || 6 : preset.h;
+
+  const downloadServer = async (combined) => {
+    try {
+      const ids = (selectedRegs.length ? selectedRegs : registrations).filter((r) => !r.manual).map((r) => r.id);
+      if (!ids.length) { toast.error("No saved registrations to export (manual entries print via Print)"); return; }
+      const res = await api.post(`/events/${event.id}/badges/pdf`, { ids, w, h, combined }, { responseType: "blob" });
+      const url = URL.createObjectURL(res.data);
+      const a = document.createElement("a"); a.href = url; a.download = combined ? "badges.pdf" : "badges.zip"; a.click(); URL.revokeObjectURL(url);
+      toast.success("Badge file downloaded");
+    } catch { toast.error("Could not generate badge file"); }
+  };
+
+  const saveCfg = async () => { try { await api.put(`/events/${event.id}/badge-config`, { ...cfg, default_w: w, default_h: h }); toast.success("Badge settings saved"); } catch { toast.error("Failed to save settings"); } };
+  const manualPdf = async () => {
+    if (!mName.trim()) { toast.error("Name required"); return; }
+    const [fn, ...ln] = mName.trim().split(" ");
+    try { const res = await api.post(`/events/${event.id}/badges/manual-pdf`, { first_name: fn, last_name: ln.join(" "), badge_category: mRole, w, h }, { responseType: "blob" }); const url = URL.createObjectURL(res.data); const a = document.createElement("a"); a.href = url; a.download = "badge.pdf"; a.click(); URL.revokeObjectURL(url); toast.success("Badge PDF downloaded"); } catch { toast.error("Failed"); }
+  };
 
   const all = useMemo(() => [...registrations, ...manual], [registrations, manual]);
   const selectedRegs = all.filter((r) => selected[r.id]);
@@ -111,6 +135,30 @@ export const BadgeCenter = ({ event, registrations }) => {
           </div>
         )}
 
+        <div className="mb-4">
+          <button onClick={() => setShowCfg((s) => !s)} data-testid="toggle-badge-config" className="text-xs font-semibold text-brand-navy">Badge & contact settings {showCfg ? "▾" : "▸"}</button>
+          {showCfg && (
+            <div className="mt-2 space-y-2 bg-slate-50 rounded-lg p-3">
+              <Input placeholder="AAWTA address" value={cfg.address || ""} onChange={(e) => setCfg((p) => ({ ...p, address: e.target.value }))} data-testid="cfg-address" className="h-8" />
+              <div className="grid grid-cols-2 gap-2">
+                <Input placeholder="Website" value={cfg.website || ""} onChange={(e) => setCfg((p) => ({ ...p, website: e.target.value }))} data-testid="cfg-website" className="h-8" />
+                <Input placeholder="Contact email" value={cfg.contact_email || ""} onChange={(e) => setCfg((p) => ({ ...p, contact_email: e.target.value }))} data-testid="cfg-email" className="h-8" />
+              </div>
+              <div className="grid grid-cols-2 gap-2 items-center">
+                <Input placeholder="Contact phone" value={cfg.contact_phone || ""} onChange={(e) => setCfg((p) => ({ ...p, contact_phone: e.target.value }))} data-testid="cfg-phone" className="h-8" />
+                <label className="flex items-center gap-2 text-xs text-slate-600"><input type="checkbox" checked={!!cfg.show_phone} onChange={(e) => setCfg((p) => ({ ...p, show_phone: e.target.checked }))} data-testid="cfg-showphone" className="accent-[#D6189B]" /> Show phone</label>
+              </div>
+              <p className="text-xs text-slate-500 mb-1 mt-1">Category colors</p>
+              <div className="grid grid-cols-3 gap-1">
+                {Object.keys(BADGE_CAT_COLORS).map((c) => (
+                  <label key={c} className="flex items-center gap-1 text-[10px] text-slate-600"><input type="color" value={(cfg.category_colors && cfg.category_colors[c]) || BADGE_CAT_COLORS[c]} onChange={(e) => setCfg((p) => ({ ...p, category_colors: { ...(p.category_colors || {}), [c]: e.target.value } }))} className="w-5 h-5 p-0 border-0 bg-transparent" /> {c}</label>
+                ))}
+              </div>
+              <Button size="sm" onClick={saveCfg} data-testid="save-badge-config" className="bg-brand-navy hover:bg-brand-navy-dark h-8">Save settings</Button>
+            </div>
+          )}
+        </div>
+
         <p className="text-sm font-semibold text-brand-navy mb-2 mt-4">Add badge manually</p>
         <div className="flex items-end gap-2 mb-3">
           <div className="flex-1"><Input placeholder="Full name" value={mName} onChange={(e) => setMName(e.target.value)} data-testid="badge-manual-name" className="h-8" /></div>
@@ -118,11 +166,14 @@ export const BadgeCenter = ({ event, registrations }) => {
             {["guest", "speaker", "staff", "volunteer"].map((r) => <option key={r} value={r}>{roleLabel(r)}</option>)}
           </select>
           <Button size="sm" onClick={addManual} data-testid="badge-add-manual" className="h-8 bg-brand-navy hover:bg-brand-navy-dark"><UserPlus size={14} /></Button>
+          <Button size="sm" variant="outline" onClick={manualPdf} data-testid="badge-manual-pdf" className="h-8"><FileDown size={14} /></Button>
         </div>
 
         <div className="flex flex-wrap gap-2 mb-3">
           <Button size="sm" onClick={() => print(all)} data-testid="print-all-badges" className="bg-brand-magenta hover:bg-brand-pink"><Printer size={14} className="mr-1" /> Print All ({all.length})</Button>
           <Button size="sm" variant="outline" disabled={!selectedRegs.length} onClick={() => print(selectedRegs)} data-testid="print-selected-badges"><Printer size={14} className="mr-1" /> Print Selected ({selectedRegs.length})</Button>
+          <Button size="sm" variant="outline" onClick={() => downloadServer(true)} data-testid="download-pdf-badges"><FileDown size={14} className="mr-1" /> Download PDF</Button>
+          <Button size="sm" variant="outline" onClick={() => downloadServer(false)} data-testid="download-zip-badges"><Archive size={14} className="mr-1" /> Download ZIP</Button>
         </div>
 
         <div className="space-y-1 max-h-56 overflow-y-auto border-t border-slate-100 pt-2">
