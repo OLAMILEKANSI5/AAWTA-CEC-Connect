@@ -102,3 +102,19 @@ Part of a 7-phase event-management overhaul (A→G). Decisions: paid events use 
 - Fixed HIGH: checked_in counter now excludes archived/cancelled (Check-In totals never exceed 100%). Made already-checked-in rows tappable to reach the guard dialog. badges_pdf generates before mutating print state.
 - Verified: iteration_11 (30/30 backend pytest, ~90% frontend) + post-fix self-test (counter 2/2, config+colors save, manual-pdf, combined pdf).
 - Minor/deferred: split server.py into routers (2640+ lines); GET /events/{id} readable by any authed user for approved/public events (intentional).
+
+## Implemented (2026-06, Phases E-G)
+### Phase E — Documents overhaul
+- DocumentIn expanded: audience (default private_draft), status, display_order, auto_onboarding, onboarding_profiles, required. 8 audiences (private_draft/ambassadors_only/volunteers_only/interns_only/ambassadors_volunteers/specific_members/all_active/admins_only) enforced via _doc_visible_to on GET /documents and GET /documents/{id} (direct-link access blocked for unauthorized).
+- New: PUT /documents/{id} (edit, preserves signatures), POST /documents/{id}/assign (members/roles/audience + notify), PUT /documents/{id}/archive, DELETE /documents/{id} (only unassigned private drafts w/ no signatures, else 400 -> archive), GET /documents/{id}/assignments (audience/roles/members+signed/history).
+- Frontend Documents.jsx: descriptions shown (2-line clamp + Read more), audience selector, auto-onboarding + profiles, edit/assign-to-all/archive/delete via More menu.
+### Phase F — Auto-onboarding + welcome notifications
+- convert_to_member now calls _assign_onboarding_docs (assigns docs where auto_onboarding + role in onboarding_profiles, dedup, notify + audit) and _send_welcome (role-specific welcome email via Resend + in-app notification; account-activation link, no passwords).
+### Phase G — Check-in volunteer perms + audit
+- Event.checkin_assignees + PUT /events/{id}/checkin-assignees (staff/owner). _can_checkin(ev,user) allows staff, owner, or assigned volunteer while event NOT Completed/Archived (auto-expiry). Applied to list_registrations(search), add_walkin, checkin_registration, lookup_registration. Volunteers remain blocked from edit/export/payment/cancel/delete/settings.
+- Audit: all E-G actions logged (document_created/updated/assigned/archived/deleted, onboarding_doc_assigned, welcome via email_log, checkin_assignees_set, bulk_*, badges_generated, etc.). Existing /audit-logs + AuditLog page display them.
+- Verified via curl: E (visibility, assign, delete-guard 400, archive), F (onboarding doc auto-assigned + welcome email sent), G (assigned volunteer lookup/checkin 200; non-assigned + post-unassign + edit = 403). Documents UI smoke-tested.
+### Deferred (backend-ready, UI minimal/pending)
+- Check-in volunteer ASSIGNMENT UI (endpoint exists; no dedicated picker yet — assign via API).
+- Notification template editor / preview / test-send (welcome uses a fixed on-brand template).
+- server.py (2600+ lines) still needs router refactor.

@@ -35,6 +35,16 @@ logger = logging.getLogger(__name__)
 
 ROLES = ["super_admin", "director", "administrator", "ambassador", "volunteer"]
 STAFF_ROLES = ["super_admin", "director", "administrator"]
+
+
+def _can_checkin(ev, user):
+    if not ev:
+        return False
+    if user["role"] in STAFF_ROLES or ev.get("submitted_by_id") == user["user_id"]:
+        return True
+    if user["user_id"] in (ev.get("checkin_assignees") or []) and ev.get("status") not in ("Completed", "Archived") and not ev.get("archived"):
+        return True
+    return False
 LEADERSHIP_ROLES = ["super_admin", "director"]
 
 # ---------------- helpers ----------------
@@ -381,6 +391,36 @@ async def add_app_note(app_id: str, payload: NoteIn, user=Depends(require_roles(
     await log_audit(user, "note_added", "application", app_id)
     return note
 
+async def _assign_onboarding_docs(member, role, user):
+    docs = await db.documents.find({"auto_onboarding": True, "status": {"$ne": "archived"}, "onboarding_profiles": role}, {"_id": 0}).to_list(500)
+    for d in docs:
+        if member["id"] in (d.get("assigned_to") or []):
+            continue
+        await db.documents.update_one({"id": d["id"]}, {"$addToSet": {"assigned_to": member["id"]}, "$set": {"updated_at": now_iso()}})
+        if member.get("user_id"):
+            await notify_user(member["user_id"], "Onboarding document assigned", f"Please review and sign: {d['title']}", "/portal/documents")
+        await log_audit(user, "onboarding_doc_assigned", "document", d["id"], {"member_id": member["id"], "role": role})
+
+
+async def _send_welcome(member, role):
+    settings = await get_settings_doc()
+    base = PUBLIC_BASE_URL
+    inner = ep(f"Hi {hesc(member.get('name') or 'there')}, congratulations — you've been approved as a CEC <strong>{hesc(role)}</strong>!")
+    inner += ep("Here's how to get started:")
+    inner += ("<ul style='color:#334155;font-size:14px;line-height:1.7'>"
+              "<li>Activate or access your CEC Connect account</li><li>Complete your profile and upload a photo</li>"
+              "<li>Review and sign your assigned onboarding documents</li><li>Review your onboarding checklist</li>"
+              "<li>Set your first monthly goals and attend orientation</li></ul>")
+    inner += ep(f'<a href="{base}/portal" style="background:#D6189B;color:#fff;padding:10px 18px;border-radius:999px;text-decoration:none;font-weight:bold">Access CEC Connect</a>')
+    inner += ep("Sign in with the Google account tied to this email — no password needed.")
+    inner += ep(f"Questions? Contact AAWTA at {hesc(settings.get('email') or '')}.")
+    log = await log_and_send(to=member["email"], subject="Welcome to the AAWTA CEC — Next Steps", inner_html=inner,
+                             title="Welcome to CEC Connect", template="welcome", related_type="member", related_id=member["id"])
+    if member.get("user_id"):
+        await notify_user(member["user_id"], "Welcome to CEC Connect!", f"You're approved as a {role}. Complete your onboarding to get started.", "/portal", "success")
+    return log
+
+
 @api_router.post("/applications/{app_id}/convert")
 async def convert_to_member(app_id: str, user=Depends(require_roles(*LEADERSHIP_ROLES))):
     a = await db.applications.find_one({"id": app_id}, {"_id": 0})
@@ -391,6 +431,8 @@ async def convert_to_member(app_id: str, user=Depends(require_roles(*LEADERSHIP_
         name=a["name"], email=a["email"], role=role, state=a.get("state"),
         data=a.get("data", {}), created_by=user, source_application=app_id,
     )
+    await _assign_onboarding_docs(member, role, user)
+    await _send_welcome(member, role)
     await db.applications.update_one({"id": app_id}, {"$set": {"status": "Converted to Member", "member_id": member["id"], "updated_at": now_iso()}})
     await add_timeline("application", app_id, "Converted to member", user)
     await log_audit(user, "application_converted", "application", app_id, {"member_id": member["id"]})
@@ -672,6 +714,9 @@ async def list_files(user=Depends(get_current_user)):
     return await db.files.find({"is_deleted": False, "uploaded_by": user["user_id"]}, {"_id": 0}).sort("created_at", -1).to_list(1000)
 
 # ---------------- documents & signatures ----------------
+DOC_AUDIENCES = ["private_draft", "ambassadors_only", "volunteers_only", "interns_only", "ambassadors_volunteers", "specific_members", "all_active", "admins_only"]
+
+
 class DocumentIn(BaseModel):
     title: str
     description: Optional[str] = ""
@@ -679,38 +724,163 @@ class DocumentIn(BaseModel):
     version: str = "1.0"
     required: bool = True
     file_id: Optional[str] = None
-    assigned_to: List[str] = []  # member ids
+    assigned_to: List[str] = []
     assigned_roles: List[str] = []
+    audience: str = "private_draft"
+    status: str = "active"
+    display_order: int = 0
+    auto_onboarding: bool = False
+    onboarding_profiles: List[str] = []
     due_date: Optional[str] = None
     requires_signature: bool = True
 
+
+def _doc_visible_to(d, user, mid):
+    if d.get("status") == "archived":
+        return False
+    aud = d.get("audience", "private_draft")
+    role = user["role"]
+    if mid and mid in (d.get("assigned_to") or []):
+        return True
+    if role in (d.get("assigned_roles") or []):
+        return True
+    if aud in ("private_draft", "admins_only", "specific_members"):
+        return False
+    if aud == "all_active":
+        return True
+    if aud == "ambassadors_only":
+        return role == "ambassador"
+    if aud == "volunteers_only":
+        return role == "volunteer"
+    if aud == "interns_only":
+        return role == "intern"
+    if aud == "ambassadors_volunteers":
+        return role in ("ambassador", "volunteer")
+    return False
+
+
 @api_router.post("/documents")
 async def create_document(payload: DocumentIn, user=Depends(require_roles(*STAFF_ROLES))):
-    doc = {"id": new_id("doc"), **payload.model_dump(), "created_by": user["name"], "created_at": now_iso()}
+    doc = {"id": new_id("doc"), **payload.model_dump(), "created_by": user["name"], "created_at": now_iso(), "updated_at": now_iso()}
     await db.documents.insert_one(dict(doc))
-    await log_audit(user, "document_created", "document", doc["id"], {"title": payload.title})
-    # notify assigned members
-    for mid in payload.assigned_to:
-        m = await db.members.find_one({"id": mid}, {"_id": 0})
-        if m and m.get("user_id"):
-            await notify_user(m["user_id"], "New document assigned", f"{payload.title} requires your attention", "/portal/documents")
+    await log_audit(user, "document_created", "document", doc["id"], {"title": payload.title, "audience": payload.audience})
+    if payload.audience != "private_draft":
+        for mid in payload.assigned_to:
+            m = await db.members.find_one({"id": mid}, {"_id": 0})
+            if m and m.get("user_id"):
+                await notify_user(m["user_id"], "New document assigned", f"{payload.title} requires your attention", "/portal/documents")
     return clean(doc)
+
 
 @api_router.get("/documents")
 async def list_documents(user=Depends(get_current_user)):
     if user["role"] in STAFF_ROLES:
-        docs = await db.documents.find({}, {"_id": 0}).sort("created_at", -1).to_list(1000)
+        docs = await db.documents.find({}, {"_id": 0}).sort([("display_order", 1), ("created_at", -1)]).to_list(1000)
     else:
         m = await db.members.find_one({"user_id": user["user_id"]}, {"_id": 0})
         mid = m["id"] if m else None
-        docs = await db.documents.find({"$or": [{"assigned_to": mid}, {"assigned_roles": user["role"]}]}, {"_id": 0}).sort("created_at", -1).to_list(1000)
-    # attach signature status for current user
+        alld = await db.documents.find({}, {"_id": 0}).sort([("display_order", 1), ("created_at", -1)]).to_list(1000)
+        docs = [d for d in alld if _doc_visible_to(d, user, mid)]
     for d in docs:
         sig = await db.signatures.find_one({"document_id": d["id"], "user_id": user["user_id"]}, {"_id": 0})
         d["signed_by_me"] = bool(sig)
         d["signature_id"] = sig["id"] if sig else None
         d["signatures_count"] = await db.signatures.count_documents({"document_id": d["id"]})
+        d["assigned_count"] = len(d.get("assigned_to") or [])
     return docs
+
+
+@api_router.get("/documents/{doc_id}")
+async def get_document(doc_id: str, user=Depends(get_current_user)):
+    d = await db.documents.find_one({"id": doc_id}, {"_id": 0})
+    if not d:
+        raise HTTPException(404, "Not found")
+    if user["role"] not in STAFF_ROLES:
+        m = await db.members.find_one({"user_id": user["user_id"]}, {"_id": 0})
+        if not _doc_visible_to(d, user, m["id"] if m else None):
+            raise HTTPException(403, "You do not have access to this document")
+    return d
+
+
+@api_router.put("/documents/{doc_id}")
+async def edit_document(doc_id: str, payload: DocumentIn, user=Depends(require_roles(*STAFF_ROLES))):
+    d = await db.documents.find_one({"id": doc_id}, {"_id": 0})
+    if not d:
+        raise HTTPException(404, "Not found")
+    upd = payload.model_dump()
+    upd["updated_at"] = now_iso()
+    await db.documents.update_one({"id": doc_id}, {"$set": upd})
+    await log_audit(user, "document_updated", "document", doc_id, {"title": payload.title})
+    return await db.documents.find_one({"id": doc_id}, {"_id": 0})
+
+
+class DocAssignIn(BaseModel):
+    member_ids: List[str] = []
+    roles: List[str] = []
+    audience: Optional[str] = None
+    notify: bool = True
+
+
+@api_router.post("/documents/{doc_id}/assign")
+async def assign_document(doc_id: str, payload: DocAssignIn, user=Depends(require_roles(*STAFF_ROLES))):
+    d = await db.documents.find_one({"id": doc_id}, {"_id": 0})
+    if not d:
+        raise HTTPException(404, "Not found")
+    assigned = list(set((d.get("assigned_to") or []) + payload.member_ids))
+    roles = list(set((d.get("assigned_roles") or []) + payload.roles))
+    aud = payload.audience or ("specific_members" if payload.member_ids and not payload.roles else d.get("audience"))
+    if aud == "private_draft":
+        aud = "specific_members"
+    await db.documents.update_one({"id": doc_id}, {"$set": {"assigned_to": assigned, "assigned_roles": roles, "audience": aud, "updated_at": now_iso()}})
+    sent = 0
+    if payload.notify:
+        targets = set(payload.member_ids)
+        if payload.roles:
+            async for m in db.members.find({"role": {"$in": payload.roles}}, {"_id": 0, "id": 1}):
+                targets.add(m["id"])
+        for mid in targets:
+            m = await db.members.find_one({"id": mid}, {"_id": 0})
+            if m and m.get("user_id"):
+                await notify_user(m["user_id"], "Document assigned", f"{d['title']} requires your attention", "/portal/documents")
+                sent += 1
+    await log_audit(user, "document_assigned", "document", doc_id, {"members": len(payload.member_ids), "roles": payload.roles, "notifications": sent})
+    return {"ok": True, "assigned": len(assigned), "notifications_sent": sent}
+
+
+@api_router.put("/documents/{doc_id}/archive")
+async def archive_document(doc_id: str, payload: Dict[str, Any], user=Depends(require_roles(*STAFF_ROLES))):
+    val = "archived" if payload.get("archived", True) else "active"
+    await db.documents.update_one({"id": doc_id}, {"$set": {"status": val, "updated_at": now_iso()}})
+    await log_audit(user, "document_archived" if val == "archived" else "document_unarchived", "document", doc_id)
+    return await db.documents.find_one({"id": doc_id}, {"_id": 0})
+
+
+@api_router.delete("/documents/{doc_id}")
+async def delete_document(doc_id: str, user=Depends(require_roles(*STAFF_ROLES))):
+    d = await db.documents.find_one({"id": doc_id}, {"_id": 0})
+    if not d:
+        raise HTTPException(404, "Not found")
+    sigs = await db.signatures.count_documents({"document_id": doc_id})
+    if sigs or (d.get("assigned_to") or []) or d.get("audience", "private_draft") != "private_draft":
+        raise HTTPException(400, "This document has been assigned or signed and cannot be deleted — archive it instead.")
+    await db.documents.delete_one({"id": doc_id})
+    await log_audit(user, "document_deleted", "document", doc_id, {"title": d.get("title")})
+    return {"ok": True}
+
+
+@api_router.get("/documents/{doc_id}/assignments")
+async def document_assignments(doc_id: str, user=Depends(require_roles(*STAFF_ROLES))):
+    d = await db.documents.find_one({"id": doc_id}, {"_id": 0})
+    if not d:
+        raise HTTPException(404, "Not found")
+    members = []
+    for mid in (d.get("assigned_to") or []):
+        m = await db.members.find_one({"id": mid}, {"_id": 0})
+        if m:
+            signed = bool(await db.signatures.find_one({"document_id": doc_id, "user_id": m.get("user_id")})) if m.get("user_id") else False
+            members.append({"id": m["id"], "name": m.get("name"), "role": m.get("role"), "signed": signed})
+    return {"audience": d.get("audience"), "roles": d.get("assigned_roles"), "members": members,
+            "history": await db.audit_logs.find({"related_type": "document", "related_id": doc_id}, {"_id": 0}).sort("created_at", -1).to_list(200)}
 
 class SignIn(BaseModel):
     legal_name: str
@@ -1112,6 +1282,23 @@ async def get_event(event_id: str, user=Depends(get_current_user)):
     ev["registered_count"] = await db.event_registrations.count_documents({"event_id": event_id, "status": {"$in": ["registered", "checked_in", "walkin"]}})
     return ev
 
+
+class CheckinAssigneesIn(BaseModel):
+    user_ids: List[str] = []
+
+
+@api_router.put("/events/{event_id}/checkin-assignees")
+async def set_checkin_assignees(event_id: str, payload: CheckinAssigneesIn, user=Depends(get_current_user)):
+    ev = await db.events.find_one({"id": event_id}, {"_id": 0})
+    if not ev: raise HTTPException(404, "Not found")
+    if user["role"] not in STAFF_ROLES and ev.get("submitted_by_id") != user["user_id"]:
+        raise HTTPException(403, "Forbidden")
+    await db.events.update_one({"id": event_id}, {"$set": {"checkin_assignees": payload.user_ids}})
+    for uid in payload.user_ids:
+        await notify_user(uid, "Check-In Volunteer assignment", f"You can now run check-in for {ev['name']}.", f"/portal/events/{event_id}/checkin")
+    await log_audit(user, "checkin_assignees_set", "event", event_id, {"count": len(payload.user_ids)})
+    return {"ok": True, "checkin_assignees": payload.user_ids}
+
 @api_router.put("/events/{event_id}/status")
 async def update_event_status(event_id: str, payload: Dict[str, Any], user=Depends(require_roles(*STAFF_ROLES))):
     status = payload.get("status")
@@ -1391,7 +1578,7 @@ async def list_registrations(event_id: str, q: Optional[str] = None, state: Opti
                              user=Depends(get_current_user)):
     ev = await db.events.find_one({"id": event_id}, {"_id": 0})
     if not ev: raise HTTPException(404, "Not found")
-    if user["role"] not in STAFF_ROLES and ev.get("submitted_by_id") != user["user_id"]:
+    if not _can_checkin(ev, user):
         raise HTTPException(403, "Forbidden")
     query = {"event_id": event_id}
     if not include_archived:
@@ -1494,7 +1681,7 @@ class WalkinIn(BaseModel):
 async def add_walkin(event_id: str, payload: WalkinIn, user=Depends(get_current_user)):
     ev = await db.events.find_one({"id": event_id}, {"_id": 0})
     if not ev: raise HTTPException(404, "Not found")
-    if user["role"] not in STAFF_ROLES and ev.get("submitted_by_id") != user["user_id"]:
+    if not _can_checkin(ev, user):
         raise HTTPException(403, "Forbidden")
     name = payload.name or f"{payload.first_name} {payload.last_name or ''}".strip()
     if not name.strip():
@@ -1597,7 +1784,7 @@ async def checkin_registration(reg_id: str, payload: Dict[str, Any], user=Depend
     reg = await db.event_registrations.find_one({"id": reg_id}, {"_id": 0})
     if not reg: raise HTTPException(404, "Not found")
     ev = await db.events.find_one({"id": reg["event_id"]}, {"_id": 0})
-    if user["role"] not in STAFF_ROLES and (not ev or ev.get("submitted_by_id") != user["user_id"]):
+    if not _can_checkin(ev, user):
         raise HTTPException(403, "Forbidden")
     ci = bool(payload.get("checked_in", True))
     if ci:
@@ -2053,7 +2240,7 @@ async def lookup_registration(token: str, user=Depends(get_current_user)):
     reg = await db.event_registrations.find_one({"checkin_token": token}, {"_id": 0})
     if not reg: raise HTTPException(404, "Registration not found")
     ev = await db.events.find_one({"id": reg["event_id"]}, {"_id": 0})
-    if user["role"] not in STAFF_ROLES and (not ev or ev.get("submitted_by_id") != user["user_id"]):
+    if not _can_checkin(ev, user):
         raise HTTPException(403, "Forbidden")
     return {"registration": reg, "already_checked_in": bool(reg.get("checked_in")), "checked_in_at": reg.get("checked_in_at"), "checked_in_by": reg.get("checked_in_by")}
 
