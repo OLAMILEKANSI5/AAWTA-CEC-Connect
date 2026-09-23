@@ -764,21 +764,64 @@ async def public_home():
     }
     return {"settings": settings, "spotlights": [{"id": m["id"], "name": m["name"], "state": m.get("state"), "photo": m.get("photo"), "focus_areas": m.get("focus_areas", []), "bio": m.get("bio")} for m in spotlights], "announcements": ann, "events": events, "stats": stats}
 
+async def _add_gallery_photos(ev, report, submitter_role, submitter_name, submitter_id, default_status=None):
+    """Create gallery_photos records for a post-event report's photos (idempotent per file+event)."""
+    caps = report.get("photo_captions") or {}
+    status = default_status or ("approved" if submitter_role in STAFF_ROLES else "pending")
+    for pid in report.get("photo_file_ids", []):
+        if await db.gallery_photos.find_one({"file_id": pid, "event_id": ev["id"]}, {"_id": 0}):
+            continue
+        doc = {"id": new_id("gph"), "file_id": pid, "event_id": ev["id"], "event_name": ev.get("name"),
+               "report_id": report.get("id"), "caption": caps.get(pid), "state": ev.get("state"),
+               "date": ev.get("date"), "location": ev.get("location"), "highlights": report.get("highlights"),
+               "status": status, "submitted_by": submitter_name, "submitted_by_id": submitter_id,
+               "reviewed_by": submitter_name if status == "approved" else None,
+               "reviewed_at": now_iso() if status == "approved" else None, "created_at": now_iso()}
+        await db.gallery_photos.insert_one(dict(doc))
+
+
+async def _backfill_gallery():
+    async for ev in db.events.find({"reports": {"$exists": True, "$ne": []}}, {"_id": 0}):
+        for r in ev.get("reports", []):
+            await _add_gallery_photos(ev, r, None, r.get("submitted_by"), r.get("submitted_by_id"),
+                                      default_status="approved" if ev.get("public") else "pending")
+
+
 @api_router.get("/public/gallery")
 async def public_gallery():
-    """Photos from post-event reports of public events — Community Impact gallery."""
-    items = []
-    async for ev in db.events.find({"public": True, "reports": {"$exists": True, "$ne": []}}, {"_id": 0}).sort("date", -1):
-        for r in ev.get("reports", []):
-            caps = r.get("photo_captions") or {}
-            for pid in r.get("photo_file_ids", []):
-                items.append({
-                    "photo_id": pid, "event_id": ev["id"], "event_name": ev.get("name"),
-                    "state": ev.get("state"), "date": ev.get("date"),
-                    "location": ev.get("location"), "highlights": r.get("highlights"),
-                    "caption": caps.get(pid),
-                })
-    return items
+    """Approved post-event photos — the public Community Impact gallery."""
+    items = await db.gallery_photos.find({"status": "approved"}, {"_id": 0}).sort("created_at", -1).to_list(1000)
+    return [{"photo_id": g["file_id"], "event_id": g.get("event_id"), "event_name": g.get("event_name"),
+             "state": g.get("state"), "date": g.get("date"), "location": g.get("location"),
+             "highlights": g.get("highlights"), "caption": g.get("caption")} for g in items]
+
+
+@api_router.get("/gallery/photos")
+async def list_gallery_photos(status: Optional[str] = None, event_id: Optional[str] = None, user=Depends(require_roles(*STAFF_ROLES))):
+    q = {}
+    if status:
+        q["status"] = status
+    if event_id:
+        q["event_id"] = event_id
+    photos = await db.gallery_photos.find(q, {"_id": 0}).sort("created_at", -1).to_list(1000)
+    counts = {s: await db.gallery_photos.count_documents({"status": s}) for s in ("pending", "approved", "rejected")}
+    return {"photos": photos, "counts": counts}
+
+
+class GalleryStatusIn(BaseModel):
+    status: str
+
+
+@api_router.put("/gallery/photos/{photo_id}/status")
+async def set_gallery_photo_status(photo_id: str, payload: GalleryStatusIn, user=Depends(require_roles(*STAFF_ROLES))):
+    if payload.status not in ("pending", "approved", "rejected"):
+        raise HTTPException(400, "Invalid status")
+    g = await db.gallery_photos.find_one({"id": photo_id}, {"_id": 0})
+    if not g:
+        raise HTTPException(404, "Photo not found")
+    await db.gallery_photos.update_one({"id": photo_id}, {"$set": {"status": payload.status, "reviewed_by": user["name"], "reviewed_at": now_iso()}})
+    await log_audit(user, f"gallery_photo_{payload.status}", "gallery_photo", photo_id, {"event_id": g.get("event_id")})
+    return {"ok": True, "status": payload.status}
 
 # ---------------- files ----------------
 @api_router.post("/upload")
@@ -826,7 +869,9 @@ async def _is_public_file(file_id: str) -> bool:
         return True
     if await db.announcements.find_one({"image_file_id": file_id, "public": True, "published": True}, {"_id": 0}):
         return True
-    if await db.events.find_one({"public": True, "reports.photo_file_ids": file_id}, {"_id": 0}):
+    if await db.events.find_one({"image_file_id": file_id, "public": True}, {"_id": 0}):
+        return True
+    if await db.gallery_photos.find_one({"file_id": file_id, "status": "approved"}, {"_id": 0}):
         return True
     return False
 
@@ -1713,6 +1758,58 @@ async def get_event(event_id: str, user=Depends(get_current_user)):
         raise HTTPException(403, "Forbidden")
     ev["registered_count"] = await db.event_registrations.count_documents({"event_id": event_id, "status": {"$in": ["registered", "checked_in", "walkin"]}})
     return ev
+
+
+class EventUpdate(BaseModel):
+    name: Optional[str] = None
+    event_type: Optional[str] = None
+    category: Optional[str] = None
+    format: Optional[str] = None
+    date: Optional[str] = None
+    end_date: Optional[str] = None
+    start_time: Optional[str] = None
+    end_time: Optional[str] = None
+    timezone: Optional[str] = None
+    location: Optional[str] = None
+    venue_name: Optional[str] = None
+    venue_address: Optional[str] = None
+    virtual_link: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = None
+    audience: Optional[str] = None
+    description: Optional[str] = None
+    requested_support: Optional[str] = None
+    estimated_attendance: Optional[int] = None
+    capacity: Optional[int] = None
+    is_paid: Optional[bool] = None
+    price: Optional[str] = None
+    registration_url: Optional[str] = None
+    ticket_url: Optional[str] = None
+    ticket_categories: Optional[List[str]] = None
+    allow_cancellation: Optional[bool] = None
+    image_file_id: Optional[str] = None
+    file_ids: Optional[List[str]] = None
+    public: Optional[bool] = None
+
+
+@api_router.put("/events/{event_id}")
+async def update_event(event_id: str, payload: EventUpdate, user=Depends(get_current_user)):
+    ev = await db.events.find_one({"id": event_id}, {"_id": 0})
+    if not ev:
+        raise HTTPException(404, "Not found")
+    if user["role"] not in STAFF_ROLES and ev.get("submitted_by_id") != user["user_id"]:
+        raise HTTPException(403, "Forbidden")
+    upd = {k: v for k, v in payload.model_dump(exclude_unset=True).items()}
+    if "virtual_link" in upd:
+        upd["virtual_link"] = normalize_website(upd.get("virtual_link"))
+    if not upd:
+        return ev
+    upd["updated_at"] = now_iso()
+    await db.events.update_one({"id": event_id}, {"$set": upd})
+    await log_audit(user, "event_updated", "event", event_id, {"fields": list(upd.keys())})
+    if "name" in upd:
+        await db.gallery_photos.update_many({"event_id": event_id}, {"$set": {"event_name": upd["name"]}})
+    return await db.events.find_one({"id": event_id}, {"_id": 0})
 
 
 class CheckinAssigneesIn(BaseModel):
@@ -2698,6 +2795,7 @@ async def submit_event_report(event_id: str, payload: EventReportIn, user=Depend
     report = {"id": new_id("erep"), **payload.model_dump(), "submitted_by": user["name"],
               "submitted_by_id": user["user_id"], "created_at": now_iso()}
     await db.events.update_one({"id": event_id}, {"$push": {"reports": report}, "$set": {"status": "Completed"}})
+    await _add_gallery_photos(ev, report, user["role"], user["name"], user["user_id"])
     await log_audit(user, "event_report_submitted", "event", event_id)
     asyncio.create_task(notify_admins(f"Post-event report: {ev['name']}", "Post-Event Report",
                                       ep(f"{user['name']} submitted a post-event report for <strong>{ev['name']}</strong>.")))
@@ -3242,6 +3340,7 @@ async def startup():
         logger.info("Storage initialized")
     except Exception as e:
         logger.error(f"Storage init failed: {e}")
+    await _backfill_gallery()
     logger.info("CEC Connect startup complete")
 
 app.include_router(api_router)

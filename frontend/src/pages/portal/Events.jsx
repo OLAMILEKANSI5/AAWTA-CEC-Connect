@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Calendar, Plus, MapPin, ExternalLink, CalendarPlus, Download, Camera, Image, X, Users, Send, EyeOff } from "lucide-react";
+import { Calendar, Plus, MapPin, ExternalLink, CalendarPlus, Download, Camera, Image, X, Users, Send, EyeOff, Pencil } from "lucide-react";
 import { api, API, useAuth } from "@/auth";
 import { PageTitle, Loading, EmptyState, StatusBadge } from "@/components/shared";
 import { Button } from "@/components/ui/button";
@@ -8,6 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, Dialog
 import { Field, SelectField } from "@/components/FormFields";
 import { UploadButton } from "@/components/PortalUpload";
 import { EventManage } from "@/components/EventManage";
+import { GalleryReview } from "@/components/GalleryReview";
 import { US_STATES, EVENT_STATUSES, EVENT_CATEGORIES, EVENT_FORMATS } from "@/lib/constants";
 
 const STAFF = ["super_admin", "director", "administrator"];
@@ -23,6 +24,7 @@ export default function Events() {
   const [rep, setRep] = useState({ photos: [], files: [] });
   const [viewReports, setViewReports] = useState(null);
   const [manageEvent, setManageEvent] = useState(null);
+  const [editingId, setEditingId] = useState(null);
   const [tab, setTab] = useState("all");
   const on = (k, v) => setF((p) => ({ ...p, [k]: v }));
   const onR = (k, v) => setRep((p) => ({ ...p, [k]: v }));
@@ -30,7 +32,21 @@ export default function Events() {
   const load = () => api.get("/events").then((r) => setEvents(r.data)).catch(() => setEvents([]));
   useEffect(() => { load(); api.get("/settings").then((r) => setSettings(r.data)).catch(() => {}); }, []);
 
-  const submit = async () => { if (!f.name) { toast.error("Event name required"); return; } try { const payload = { ...f, ticket_categories: f.ticket_categories ? f.ticket_categories.split(",").map((s) => s.trim()).filter(Boolean) : [] }; await api.post("/events", payload); toast.success(isStaff ? "Event added" : "Event submitted for review"); setOpen(false); setF({}); load(); } catch { toast.error("Failed"); } };
+  const submit = async () => {
+    if (!f.name) { toast.error("Event name required"); return; }
+    try {
+      const payload = { ...f, ticket_categories: f.ticket_categories ? f.ticket_categories.split(",").map((s) => s.trim()).filter(Boolean) : [] };
+      delete payload.image_name;
+      if (editingId) { await api.put(`/events/${editingId}`, payload); toast.success("Event updated"); }
+      else { await api.post("/events", payload); toast.success(isStaff ? "Event added" : "Event submitted for review"); }
+      setOpen(false); setF({}); setEditingId(null); load();
+    } catch { toast.error("Failed"); }
+  };
+  const editEvent = (e) => {
+    setEditingId(e.id);
+    setF({ ...e, ticket_categories: (e.ticket_categories || []).join(", "), image_name: e.image_file_id ? "Current image attached" : undefined });
+    setOpen(true);
+  };
   const setStatus = async (id, status) => { await api.put(`/events/${id}/status`, { status }); toast.success(status); load(); };
   const publishToggle = async (e) => { await api.put(`/events/${e.id}/publish`, { published: !e.published }); toast.success(e.published ? "Unpublished" : "Published to public calendar"); load(); };
   const archiveEvent = async (id) => { await api.put(`/events/${id}/archive`); toast.success("Archived"); load(); };
@@ -64,10 +80,10 @@ export default function Events() {
       <PageTitle title="Events & Calendar" subtitle="Community events and requests" action={
         <div className="flex gap-2">
           {settings.calendar_link && <a href={settings.calendar_link} target="_blank" rel="noreferrer"><Button variant="outline" className="rounded-full"><Calendar size={15} className="mr-1" /> AAWTA Calendar <ExternalLink size={13} className="ml-1" /></Button></a>}
-          <Dialog open={open} onOpenChange={setOpen}>
-            <DialogTrigger asChild><Button data-testid="new-event-btn" className="rounded-full bg-brand-magenta hover:bg-brand-pink"><Plus size={16} className="mr-1" /> {isStaff ? "Add Event" : "Submit Event"}</Button></DialogTrigger>
+          <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (!o) { setF({}); setEditingId(null); } }}>
+            <DialogTrigger asChild><Button data-testid="new-event-btn" onClick={() => { setEditingId(null); setF({}); }} className="rounded-full bg-brand-magenta hover:bg-brand-pink"><Plus size={16} className="mr-1" /> {isStaff ? "Add Event" : "Submit Event"}</Button></DialogTrigger>
             <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
-              <DialogHeader><DialogTitle>{isStaff ? "Add Event" : "Submit Event Idea"}</DialogTitle></DialogHeader>
+              <DialogHeader><DialogTitle>{editingId ? "Edit Event" : (isStaff ? "Add Event" : "Submit Event Idea")}</DialogTitle></DialogHeader>
               <div className="space-y-4">
                 <Field label="Event name" name="name" value={f.name} onChange={on} required />
                 <div className="grid grid-cols-2 gap-4">
@@ -100,7 +116,7 @@ export default function Events() {
                 <div>{f.image_name ? <span className="text-sm text-emerald-600">{f.image_name}</span> : <UploadButton testid="event-image-upload" category="event-image" accept="image/*" label="Event image" onUploaded={(x) => setF((p) => ({ ...p, image_file_id: x.id, image_name: x.filename }))} />}</div>
                 <Field label="Requested support" name="requested_support" value={f.requested_support} onChange={on} textarea />
               </div>
-              <DialogFooter><Button onClick={submit} data-testid="save-event-btn" className="bg-brand-magenta hover:bg-brand-pink">{isStaff ? "Add" : "Submit"}</Button></DialogFooter>
+              <DialogFooter><Button onClick={submit} data-testid="save-event-btn" className="bg-brand-magenta hover:bg-brand-pink">{editingId ? "Save Changes" : (isStaff ? "Add" : "Submit")}</Button></DialogFooter>
             </DialogContent>
           </Dialog>
         </div>
@@ -108,13 +124,13 @@ export default function Events() {
 
       {events !== null && (
         <div className="flex flex-wrap gap-1 mb-4 border-b border-slate-200" data-testid="event-subtabs">
-          {[["all", "Calendar"], ["my", "My Events"], ...(isStaff ? [["allstaff", "All Events"], ["awaiting", "Awaiting Approval"]] : []), ["published", "Published"], ["archived", "Archived"]].map(([k, label]) => (
+          {[["all", "Calendar"], ["my", "My Events"], ...(isStaff ? [["allstaff", "All Events"], ["awaiting", "Awaiting Approval"], ["gallery", "Photo Gallery"]] : []), ["published", "Published"], ["archived", "Archived"]].map(([k, label]) => (
             <button key={k} onClick={() => setTab(k)} data-testid={`subtab-${k}`} className={`px-3 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${tab === k ? "border-brand-magenta text-brand-magenta" : "border-transparent text-slate-500 hover:text-brand-navy"}`}>{label}</button>
           ))}
         </div>
       )}
 
-      {events === null ? <Loading /> : (() => {
+      {tab === "gallery" ? <GalleryReview /> : events === null ? <Loading /> : (() => {
         const filtered = (events || []).filter((e) => {
           if (tab === "my") return e.submitted_by_id === user?.user_id;
           if (tab === "awaiting") return ["Submitted", "Under Review"].includes(e.status);
@@ -135,8 +151,16 @@ export default function Events() {
               {isStaff && ["Approved", "Scheduled", "Completed"].includes(e.status) && !e.archived && (
                 <div className="flex flex-wrap gap-2 mt-3">
                   <Button size="sm" variant={e.published ? "outline" : "default"} onClick={() => publishToggle(e)} data-testid={`publish-${e.id}`} className={e.published ? "text-slate-600" : "bg-emerald-600 hover:bg-emerald-700"}>{e.published ? <><EyeOff size={13} className="mr-1" /> Unpublish</> : <><Send size={13} className="mr-1" /> Publish</>}</Button>
+                  <Button size="sm" variant="outline" onClick={() => editEvent(e)} data-testid={`edit-event-${e.id}`} className="text-brand-navy border-brand-navy/30"><Pencil size={13} className="mr-1" /> Edit</Button>
                   <Button size="sm" variant="outline" onClick={() => setManageEvent(e)} data-testid={`manage-${e.id}`} className="text-brand-navy border-brand-navy/30"><Users size={13} className="mr-1" /> Registrations</Button>
                   <Button size="sm" variant="outline" onClick={() => archiveEvent(e.id)} data-testid={`archive-${e.id}`} className="text-slate-500">Archive</Button>
+                </div>
+              )}
+              {isStaff && ["Submitted", "Under Review"].includes(e.status) && (
+                <div className="flex gap-2 mt-3">
+                  <Button size="sm" onClick={() => setStatus(e.id, "Approved")} data-testid={`approve-event-${e.id}`} className="bg-emerald-600 hover:bg-emerald-700 flex-1">Approve</Button>
+                  <Button size="sm" variant="outline" onClick={() => editEvent(e)} data-testid={`edit-event-${e.id}`} className="text-brand-navy border-brand-navy/30"><Pencil size={13} className="mr-1" /> Edit</Button>
+                  <Button size="sm" variant="outline" onClick={() => setStatus(e.id, "Declined")} className="text-rose-600 border-rose-200 flex-1">Decline</Button>
                 </div>
               )}
               {["Approved", "Scheduled", "Completed"].includes(e.status) && (
@@ -145,12 +169,6 @@ export default function Events() {
                   <a href={`${API}/events/${e.id}/ics`} data-testid={`ics-${e.id}`}><Button size="sm" variant="outline"><Download size={14} className="mr-1" /> .ics</Button></a>
                   {(isStaff || e.submitted_by_id === user?.user_id) && <Button size="sm" onClick={() => setReportEvent(e)} data-testid={`report-event-${e.id}`} className="bg-brand-magenta hover:bg-brand-pink"><Camera size={14} className="mr-1" /> Post-Event Report</Button>}
                   {(e.reports?.length > 0) && (isStaff || e.public || e.submitted_by_id === user?.user_id) && <Button size="sm" variant="outline" onClick={() => openReports(e)} data-testid={`view-reports-${e.id}`}><Image size={14} className="mr-1" /> Reports ({e.reports.length})</Button>}
-                </div>
-              )}
-              {isStaff && ["Submitted", "Under Review"].includes(e.status) && (
-                <div className="flex gap-2 mt-3">
-                  <Button size="sm" onClick={() => setStatus(e.id, "Approved")} data-testid={`approve-event-${e.id}`} className="bg-emerald-600 hover:bg-emerald-700 flex-1">Approve</Button>
-                  <Button size="sm" variant="outline" onClick={() => setStatus(e.id, "Declined")} className="text-rose-600 border-rose-200 flex-1">Decline</Button>
                 </div>
               )}
             </div>
