@@ -84,7 +84,7 @@ async def add_timeline(related_type, related_id, event, actor=None, meta=None):
         "created_at": now_iso(),
     })
 
-async def notify_user(user_id, title, body, link=None, ntype="info"):
+async def notify_user(user_id, title, body, link=None, ntype="info", category=None):
     await db.notifications.insert_one({
         "id": new_id("ntf"),
         "user_id": user_id,
@@ -92,9 +92,17 @@ async def notify_user(user_id, title, body, link=None, ntype="info"):
         "body": body,
         "link": link,
         "type": ntype,
+        "category": category,
         "read": False,
         "created_at": now_iso(),
     })
+
+async def _leadership_user_ids():
+    ids = []
+    async for u in db.users.find({"role": {"$in": STAFF_ROLES}, "account_status": {"$nin": ["suspended", "deactivated"]}}, {"_id": 0, "user_id": 1}):
+        if u.get("user_id"):
+            ids.append(u["user_id"])
+    return ids
 
 async def get_director_recipients():
     """Emails that receive director-level notifications."""
@@ -1092,7 +1100,35 @@ async def sign_document(doc_id: str, payload: SignIn, request: Request, user=Dep
     m = await db.members.find_one({"user_id": user["user_id"]}, {"_id": 0})
     if m:
         await add_timeline("member", m["id"], f"Signed document: {d['title']}", user)
+    signer_name = (m.get("name") if m else None) or payload.legal_name
+    lead_link = f"/portal/members/{m['id']}" if m else "/portal/documents"
+    for lid in await _leadership_user_ids():
+        if lid != user["user_id"]:
+            await notify_user(lid, "Document signed", f"{signer_name} completed and signed {d['title']}.", lead_link, "success", "Signatures")
     return clean(sig)
+
+
+@api_router.get("/documents/{doc_id}/signers")
+async def doc_signers(doc_id: str, user=Depends(require_roles(*STAFF_ROLES))):
+    d = await db.documents.find_one({"id": doc_id}, {"_id": 0})
+    if not d:
+        raise HTTPException(404, "Not found")
+    sigs = await db.signatures.find({"document_id": doc_id}, {"_id": 0}).sort("signed_at", -1).to_list(1000)
+    signed = []
+    signed_uids = set()
+    for s in sigs:
+        signed_uids.add(s.get("user_id"))
+        m = await db.members.find_one({"user_id": s.get("user_id")}, {"_id": 0}) if s.get("user_id") else None
+        signed.append({"name": (m or {}).get("name") or s.get("legal_name"), "role": (m or {}).get("role"),
+                       "member_id": (m or {}).get("id"), "signed_at": s.get("signed_at"),
+                       "legal_name": s.get("legal_name"), "signature_id": s.get("id"),
+                       "assigned_at": (m or {}).get("start_date")})
+    pending = []
+    for mid in (d.get("assigned_to") or []):
+        m = await db.members.find_one({"id": mid}, {"_id": 0})
+        if m and m.get("user_id") not in signed_uids:
+            pending.append({"name": m.get("name"), "role": m.get("role"), "member_id": m["id"], "assigned_at": m.get("start_date")})
+    return {"title": d.get("title"), "file_id": d.get("file_id"), "signed": signed, "pending": pending}
 
 @api_router.get("/documents/{doc_id}/signatures")
 async def doc_signatures(doc_id: str, user=Depends(require_roles(*STAFF_ROLES))):
@@ -1109,23 +1145,34 @@ class MessageIn(BaseModel):
 
 @api_router.post("/messages")
 async def send_message(payload: MessageIn, user=Depends(get_current_user)):
-    recipients = set(payload.recipient_ids)
-    if user["role"] in STAFF_ROLES and (payload.target_role or payload.target_state):
-        q = {}
-        if payload.target_role: q["role"] = payload.target_role
-        if payload.target_state: q["state"] = payload.target_state
-        async for m in db.members.find(q, {"_id": 0}):
-            if m.get("user_id"):
-                recipients.add(m["user_id"])
+    to_leadership = False
+    member_id = None
+    if user["role"] in STAFF_ROLES:
+        recipients = set(payload.recipient_ids)
+        if payload.target_role or payload.target_state:
+            q = {}
+            if payload.target_role: q["role"] = payload.target_role
+            if payload.target_state: q["state"] = payload.target_state
+            async for m in db.members.find(q, {"_id": 0}):
+                if m.get("user_id"):
+                    recipients.add(m["user_id"])
+    else:
+        # Members always route to the CEC leadership team (no admin directory exposed).
+        to_leadership = True
+        recipients = set(await _leadership_user_ids())
+        recipients.discard(user["user_id"])
+        mm = await db.members.find_one({"user_id": user["user_id"]}, {"_id": 0, "id": 1})
+        member_id = (mm or {}).get("id")
     if not recipients:
-        raise HTTPException(400, "No recipients")
+        raise HTTPException(400, "No recipients available")
     thread_id = new_id("thread")
     msg = {"id": new_id("msg"), "thread_id": thread_id, "subject": payload.subject, "body": payload.body,
            "from_id": user["user_id"], "from_name": user["name"], "from_role": user["role"],
-           "recipient_ids": list(recipients), "file_ids": payload.file_ids, "read_by": [], "created_at": now_iso()}
+           "recipient_ids": list(recipients), "file_ids": payload.file_ids, "read_by": [],
+           "to_leadership": to_leadership, "member_id": member_id, "created_at": now_iso()}
     await db.messages.insert_one(dict(msg))
     for rid in recipients:
-        await notify_user(rid, f"New message: {payload.subject}", payload.body[:120], "/portal/messages")
+        await notify_user(rid, f"New message: {payload.subject}", payload.body[:120], "/portal/messages", "info", "Messages")
     await log_audit(user, "message_sent", "message", msg["id"])
     return clean(msg)
 

@@ -26,6 +26,7 @@ export default function Documents() {
   const [legalName, setLegalName] = useState("");
   const [consent, setConsent] = useState(false);
   const [expanded, setExpanded] = useState({});
+  const [signers, setSigners] = useState(null);
   const on = (k, v) => setF((p) => ({ ...p, [k]: v }));
 
   const load = () => api.get("/documents").then((r) => setDocs(r.data)).catch(() => setDocs([]));
@@ -50,6 +51,7 @@ export default function Documents() {
     catch (e) { toast.error(e?.response?.data?.detail || "Failed"); }
   };
   const audLabel = (a) => (AUDIENCES.find((x) => x[0] === (a || "private_draft")) || ["private_draft", "Private Draft"])[1];
+  const openSigners = async (d) => { try { const { data } = await api.get(`/documents/${d.id}/signers`); setSigners({ ...data, doc: d }); } catch { toast.error("Failed to load signers"); } };
 
   return (
     <div className="space-y-5">
@@ -102,7 +104,7 @@ export default function Documents() {
                 <div className="flex-1 min-w-[200px]">
                   <p className="font-medium text-slate-800">{d.title} <span className="text-xs text-slate-400">v{d.version}</span>{d.status === "archived" && <span className="text-xs text-slate-400"> · Archived</span>}</p>
                   {d.description && <p className="text-sm text-slate-500 mt-0.5" style={expanded[d.id] ? {} : { display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }} data-testid={`doc-desc-${d.id}`}>{d.description}{!expanded[d.id] && d.description.length > 120 ? <button className="text-brand-magenta ml-1" onClick={() => setExpanded((p) => ({ ...p, [d.id]: true }))}>Read more</button> : null}</p>}
-                  <p className="text-xs text-slate-400 mt-1">{d.category} · {d.required ? "Required" : "Optional"}{isStaff ? ` · ${audLabel(d.audience)} · ${d.assigned_count || 0} assigned · ${d.signatures_count} signed` : ""}</p>
+                  <p className="text-xs text-slate-400 mt-1">{d.category} · {d.required ? "Required" : "Optional"}{isStaff && <> · {audLabel(d.audience)} · {d.assigned_count || 0} assigned · <button onClick={() => openSigners(d)} data-testid={`signed-count-${d.id}`} className="text-brand-magenta underline font-medium">{d.signatures_count} signed</button></>}</p>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
                   {d.file_id && <a href={`${API}/files/${d.file_id}/download`} target="_blank" rel="noreferrer"><Button variant="outline" size="sm"><Download size={14} className="mr-1" /> View</Button></a>}
@@ -137,6 +139,29 @@ export default function Documents() {
             <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} className="accent-[#D6189B]" data-testid="sign-consent" /> I consent to sign this document electronically.</label>
           </div>
           <DialogFooter><Button onClick={sign} data-testid="submit-signature-btn" className="bg-brand-magenta hover:bg-brand-pink">Sign Document</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={!!signers} onOpenChange={(o) => !o && setSigners(null)}>
+        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto" data-testid="signers-dialog">
+          <DialogHeader><DialogTitle>Signatures — {signers?.title}</DialogTitle></DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <p className="text-xs font-semibold text-emerald-600 uppercase tracking-wide mb-2">Signed ({signers?.signed?.length || 0})</p>
+              {signers?.signed?.length ? signers.signed.map((s, i) => (
+                <div key={i} className="flex items-center justify-between gap-2 py-2 border-b border-slate-100 text-sm" data-testid="signer-row">
+                  <div className="min-w-0"><p className="font-medium text-slate-800 truncate">{s.name} <span className="text-xs text-slate-400 capitalize">{s.role}</span></p><p className="text-xs text-slate-400">Signed {new Date(s.signed_at).toLocaleString()} · as "{s.legal_name}"</p></div>
+                  <a href={`${API}/signatures/${s.signature_id}/pdf`} target="_blank" rel="noreferrer" data-testid={`signer-pdf-${i}`}><Button size="sm" variant="outline"><Download size={13} className="mr-1" /> PDF</Button></a>
+                </div>
+              )) : <p className="text-sm text-slate-400">No signatures yet.</p>}
+            </div>
+            <div>
+              <p className="text-xs font-semibold text-amber-600 uppercase tracking-wide mb-2">Pending ({signers?.pending?.length || 0})</p>
+              {signers?.pending?.length ? signers.pending.map((s, i) => (
+                <div key={i} className="flex items-center justify-between py-1.5 text-sm" data-testid="pending-row"><span className="text-slate-700">{s.name} <span className="text-xs text-slate-400 capitalize">{s.role}</span></span><span className="text-xs text-amber-600">Awaiting signature</span></div>
+              )) : <p className="text-sm text-slate-400">Everyone assigned has signed.</p>}
+            </div>
+            {signers?.doc?.file_id && <a href={`${API}/files/${signers.doc.file_id}/download`} target="_blank" rel="noreferrer"><Button variant="outline" size="sm" className="w-full" data-testid="preview-doc-btn"><Download size={14} className="mr-1" /> Preview document</Button></a>}
+          </div>
         </DialogContent>
       </Dialog>
     </div>

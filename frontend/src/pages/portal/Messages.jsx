@@ -36,7 +36,6 @@ export default function Messages() {
 
   const send = async () => {
     if (!f.subject || !f.body) { toast.error("Subject and message required"); return; }
-    if (!isStaff && !f.recipient_ids.length) { toast.error("Select recipients"); return; }
     try { await api.post("/messages", { ...f, file_ids: attachments.map((a) => a.id) }); toast.success("Message sent"); setOpen(false); setF({ recipient_ids: [], file_ids: [] }); setAttachments([]); load(); }
     catch (e) { toast.error(e?.response?.data?.detail || "Failed"); }
   };
@@ -95,9 +94,9 @@ export default function Messages() {
     <div className="space-y-5">
       <PageTitle title="Messages" subtitle="Threaded conversations with your team" action={
         <Dialog open={open} onOpenChange={setOpen}>
-          <DialogTrigger asChild><Button data-testid="new-message-btn" className="rounded-full bg-brand-magenta hover:bg-brand-pink"><Plus size={16} className="mr-1" /> New Message</Button></DialogTrigger>
+          <DialogTrigger asChild><Button data-testid="new-message-btn" className="rounded-full bg-brand-magenta hover:bg-brand-pink"><Plus size={16} className="mr-1" /> {isStaff ? "New Message" : "Contact CEC Leadership"}</Button></DialogTrigger>
           <DialogContent className="max-w-lg">
-            <DialogHeader><DialogTitle>Send Message</DialogTitle></DialogHeader>
+            <DialogHeader><DialogTitle>{isStaff ? "Send Message" : "Contact CEC Leadership"}</DialogTitle></DialogHeader>
             <div className="space-y-4">
               <Field label="Subject" name="subject" value={f.subject} onChange={on} required />
               <Field label="Message" name="body" value={f.body} onChange={on} textarea required />
@@ -111,7 +110,7 @@ export default function Messages() {
                     {members.filter((m) => m.user_id).map((m) => <option key={m.id} value={m.user_id}>{m.name}</option>)}
                   </select>
                 </div>
-              </>) : <p className="text-xs text-slate-500">Your message will be sent to CEC leadership.</p>}
+              </>) : <p className="text-sm text-slate-600 bg-slate-50 border border-slate-200 rounded-lg p-3">Your message will be sent to the <span className="font-medium text-brand-navy">CEC Leadership team</span>. They'll be notified and will reply here — the conversation stays in your message history.</p>}
               {attachments.length > 0 && <div className="flex flex-wrap gap-2">{attachments.map((a) => (
                 <span key={a.id} className="flex items-center gap-1 text-xs bg-slate-100 rounded-full px-2 py-1"><Paperclip size={12} /> {a.filename} <button onClick={() => setAttachments((p) => p.filter((x) => x.id !== a.id))}><X size={12} /></button></span>
               ))}</div>}
