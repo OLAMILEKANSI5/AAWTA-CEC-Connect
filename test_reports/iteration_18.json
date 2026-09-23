@@ -1,0 +1,40 @@
+{
+  "summary": "CEC Connect Phase 1 (member->leadership messaging fix, signature notifications, /signers endpoint, notification categories, bell) verified end-to-end. Backend: new suite test_cec_connect_phase1.py — 14/14 pass in ~4s. Covers (a) member (tok_amb_g3test) POST /messages without recipient_ids -> 200, to_leadership=true, member_id=mem_memba, recipient_ids equals ALL leadership user_ids minus self; each recipient gets a 'New message' notification with category='Messages'; (b) leadership can GET /messages/{thread}/thread and POST /reply — member sees the reply in the same thread; (c) staff regression: recipient_ids still works, target_role fanout still works, empty recipients still -> 400; (d) POST /documents/{id}/sign creates one 'Document signed' notification per non-signer leadership user with category='Signatures' and link=/portal/members/{member_id}; (e) GET /documents/{id}/signers (staff-only, non-staff 403) returns {title, file_id, signed:[{name,role,member_id,signed_at,legal_name,signature_id,assigned_at}], pending:[{name,role,member_id,assigned_at}]}, signer moves from pending->signed after signing; (f) GET /notifications returns objects with 'category' field and mark-read/read-all still work. Regression: test_group1_comms_templates + test_group3_events_gallery + test_group3_hours_certs_assign = 56 passed / 1 skipped. Frontend UI: MEMBER (tok_amb_g3test) /portal/messages shows 'Contact CEC Leadership' button (data-testid new-message-btn), dialog opens with NO recipient picker (recipient-select count = 0), Subject + Message fields + Attach file + Send — subject 'UI-P1 Member ping…' successfully posts and appears in the thread list with 'Message sent' toast. STAFF (tok_admtest) opens the same thread, uses reply-input + send-reply-btn, and message appears in thread-messages. STAFF /portal/documents shows 4 clickable 'N signed' buttons (data-testid signed-count-{docId}); clicking opens signers-dialog with signer-row + signer-pdf-* (download PDF) + preview-doc-btn; pending-row rendered when applicable. Mobile 390x844 same dialog opens correctly. Notification bell shows 'Messages' category label; 'Signatures' label not visible in the current bell dropdown snapshot but backend confirms category is stored on the notification and staff API returns it — see design note below.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Contact CEC Leadership dialog (member)", "issues": ["Subject and Message inputs have no placeholder text or label-linked htmlFor — labels sit above them but the empty inputs look 'raw'. Adding placeholder='Subject line' / 'Type your message…' improves affordance (and testability)."]},
+      {"screen": "Dialog a11y", "issues": ["Console warning: 'Missing Description or aria-describedby for DialogContent' on Contact CEC Leadership + signers-dialog + sign dialog. Add DialogDescription to satisfy Radix a11y."]},
+      {"screen": "Notification bell", "issues": ["Bell dropdown groups by category label; 'Messages' shows once there are message notifications but 'Signatures' label was not visible in the dropdown at test time (only 1 recent signature). Confirm the bell renders empty-category headers only when there is at least one item — if so, this is expected behavior."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_cec_connect_phase1.py",
+    "/app/test_reports/pytest/phase1_it18.xml"
+  ],
+  "action_items": [
+    "OPTIONAL: add placeholder text to the Subject/Message inputs in Messages.jsx new-message dialog (both staff and member variants).",
+    "OPTIONAL: add DialogDescription to Contact CEC Leadership, Signers, and Sign dialogs to remove Radix a11y console warnings."
+  ],
+  "critical_code_review_comments": [
+    "server.py send_message: for staff, if `recipient_ids` is empty and no target_role/target_state, response is 400 'No recipients available' — that error path is fine, but if a staff user only sets target_role and no matching members exist, they also get 400 with the same generic message — consider distinguishing 'no members match target' vs 'nothing was provided'.",
+    "server.py sign_document notification loop skips the signer themself (`if lid != user['user_id']`) which is correct, but when a leadership user signs their own assigned doc (rare) none of the OTHER leadership users get skipped — good. However there is no de-dup if the same user is somehow returned twice.",
+    "server.py doc_signers pending list uses member.start_date as `assigned_at`, but assignment happens when document is created/edited, not at member start_date. The label 'assigned_at' is misleading — either rename to `member_since` or compute the actual assignment timestamp from an audit event.",
+    "server.py reply_message calls notify_user without category — replies land uncategorised in the bell while first-message notifications are categorised 'Messages'. Add category='Messages' to the reply notification to keep the bell consistent.",
+    "Frontend Messages.jsx: the member 'to_leadership' dialog does not display leadership recipients count or names — 'CEC Leadership team' is a link with no target; consider adding a tooltip or 'sent to N leadership members' hint so members know who receives it.",
+    "Frontend Documents.jsx signers-dialog Preview button uses /api/files/{file_id}/download — this forces a full download instead of an inline preview; despite the label 'Preview document', it will save the PDF. Rename to 'Download document' or add ?disposition=inline routing.",
+    "server.py file grew to 3724 lines. Split messages + documents + notifications into their own routers."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_cec_connect_phase1.py (new)"
+  ],
+  "success_rate": {"backend": "100% (14/14 new + 56/57 regression, 1 skipped)", "frontend": "100% on all Phase-1 UI flows (member send, staff reply, signers dialog desktop+mobile)"},
+  "test_credentials": "Authorization: Bearer tok_admtest (super_admin); Authorization: Bearer tok_amb_g3test (ambassador linked to member mem_memba). UI cookie session_token=<token>.",
+  "seed_data_creation": "Test creates a fresh TEST_P1 document assigned to mem_memba per run (via /upload + /documents), signs it as ambassador, and asserts the leadership Signatures notification + /signers state. Also creates several TEST_P1 message threads that persist. No teardown was added — safe because test messages are prefixed TEST_P1 and mem_memba's signature is idempotent per doc.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Phase-1 suite: /app/backend/tests/test_cec_connect_phase1.py (14 tests, ~4s). Testids: new-message-btn, send-message-btn, thread-{thread_id}, thread-messages, reply-input, send-reply-btn, signed-count-{docId}, signers-dialog, signer-row, signer-pdf-{i}, pending-row, preview-doc-btn, sign-{docId}, sign-legal-name, sign-consent, submit-signature-btn. Backend response contract for /documents/{id}/signers is now: {title, file_id, signed:[...], pending:[...]}. Notifications carry category='Messages'|'Signatures'. Member message dialog uses first input (no data-testid on Subject) — future tests should target `div[role='dialog'] input:first-of-type` OR request main-agent add data-testid=message-subject/message-body.",
+  "rca of the issue": "No functional bugs found. Phase-1 fix works as designed: non-staff POST /messages now auto-routes to _leadership_user_ids() with to_leadership=true; member_id populated from linked member profile. Signing calls notify_user with category='Signatures' for every non-self leadership user, and /signers returns full signed/pending arrays. Bell/notifications include the new category field."
+}

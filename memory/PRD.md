@@ -181,8 +181,15 @@ Part of a large Ambassador/Volunteer lifecycle overhaul (build order: Messaging 
 - Full Apple Beta Readiness matrix (Ready/Needs Work/Not Yet) at **/app/memory/APPLE_BETA_READINESS.md**. Verdict: no core re-architecture needed. P0 gaps for beta: native token auth (ASWebAuthenticationSession + Keychain; backend already accepts Bearer), App Privacy label + camera/photo permission strings. P1: APNs push (fan-out from central notify_user + device-registration endpoint), Universal Links (apple-app-site-association). P2: notification preference center, accessibility pass. Role-scoped mobile nav already in place.
 
 ## Next Tasks
-- Group 5 follow-through (when ready): device-token registration endpoint + APNs fan-out, Universal Links file, notification preference center, accessibility/touch-target pass.
-- P2: External Google Calendar 2-way sync, reporting enhancements, server.py router refactor (~3,680 lines).
+- **PHASE 2 (next)** — Automated reminders & account lifecycle (items 4-8): 48h unanswered-conversation follow-up (clears on reply), pending-action reminders, 5-day inactivity reminder (once, tracked), 30-day inactivity → "Inactive — Reauthentication Required" (data preserved; Google re-auth or leadership reactivation), application aging alerts 15/30 days on leadership dashboard. Run via platform cron.
+- **PHASE 3** — Event/gallery image performance (item 10): upload compression + generated thumbnails, thumbnails on cards/gallery, full-res on open, lazy load + caching headers.
+
+## Implemented (2026-06, Comms/Docs Phase 1 — items 1,2,3,9)
+- notify_user gains `category`; `_leadership_user_ids()` = active users with role in STAFF_ROLES (super_admin/director/administrator).
+- Signature completion → in-app notification to all leadership ("[Name] completed and signed [Doc].", category Signatures, links to /portal/members/{id}).
+- GET /documents/{id}/signers (staff): {signed[name,role,signed_at,legal_name,signature_id], pending[name,role], file_id}. Documents page: clickable "N signed" → signers dialog with per-signer PDF + pending list + preview.
+- Member-initiated messaging fixed: non-staff POST /messages auto-routes to leadership (to_leadership, member_id); frontend "Contact CEC Leadership" (no admin directory), attachments kept. Reply + first-message notifications categorized "Messages".
+- Verified: iteration_18 — 14/14 new pytest + 56/57 regression + full UI (desktop+mobile). Suite test_cec_connect_phase1.py.
 - GROUP 4: Resources Calendar button → /events; fix event image not showing on published events; Edit/Update published events (all fields).
 - GROUP 5: Mobile/iOS readiness (responsive/touch pass, role-scoped mobile nav, deep-link + push-ready architecture, Apple Beta Readiness matrix).
 - GROUP 6: E2E workflow testing; then P2 (Google Calendar sync, server.py router refactor, recognition/certificates, reporting enhancements).

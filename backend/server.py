@@ -1229,7 +1229,7 @@ async def reply_message(thread_id: str, payload: ReplyIn, user=Depends(get_curre
            "recipient_ids": recipients, "file_ids": payload.file_ids, "read_by": [user["user_id"]], "is_reply": True, "created_at": now_iso()}
     await db.messages.insert_one(dict(msg))
     for rid in recipients:
-        await notify_user(rid, f"Reply: {root.get('subject')}", payload.body[:120], "/portal/messages")
+        await notify_user(rid, f"Reply: {root.get('subject')}", payload.body[:120], "/portal/messages", "info", "Messages")
     await log_audit(user, "message_replied", "message", msg["id"])
     return clean(msg)
 
