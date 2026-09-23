@@ -10,6 +10,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { ROLE_LABELS } from "@/lib/constants";
 import { CommsPanel } from "@/components/CommsPanel";
 import { MemberHoursTab } from "@/components/MemberHoursTab";
+import { GoalCard } from "@/components/GoalCard";
 
 export default function MemberDetail() {
   const { id } = useParams();
@@ -18,7 +19,8 @@ export default function MemberDetail() {
   const [goals, setGoals] = useState([]);
 
   const load = () => api.get(`/members/${id}`).then((r) => setM(r.data)).catch(() => toast.error("Not found"));
-  useEffect(() => { load(); api.get(`/goals?member_id=${id}`).then((r) => setGoals(r.data)).catch(() => {}); /* eslint-disable-next-line */ }, [id]);
+  const loadGoals = () => api.get(`/goals?member_id=${id}`).then((r) => setGoals(r.data)).catch(() => {});
+  useEffect(() => { load(); loadGoals(); /* eslint-disable-next-line */ }, [id]);
 
   const setStatus = async (status) => { await api.put(`/members/${id}/status`, { status }); toast.success(`Account ${status}`); load(); };
   const reactivate = async () => { await api.put(`/members/${id}/reactivate`); toast.success("Member reactivated"); load(); };
@@ -55,8 +57,8 @@ export default function MemberDetail() {
               </div>
             </TabsContent>
             <TabsContent value="goals">
-              <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-2">
-                {goals.length ? goals.map((g) => (<div key={g.id} className="flex items-center justify-between p-2.5 border-b last:border-0 border-slate-100"><div><p className="text-sm font-medium">{g.title}</p><p className="text-xs text-slate-400">{g.category}</p></div><StatusBadge status={g.status} /></div>)) : <p className="text-sm text-slate-400">No goals assigned</p>}
+              <div className="space-y-3">
+                {goals.length ? goals.map((g) => (<GoalCard key={g.id} goal={g} onChange={loadGoals} canEdit />)) : <p className="text-sm text-slate-400 bg-white border border-slate-200 rounded-xl p-5">No goals assigned</p>}
               </div>
             </TabsContent>
             <TabsContent value="comms">

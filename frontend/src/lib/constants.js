@@ -15,7 +15,7 @@ export const INQUIRY_TYPES = ["Learn more about the CEC","State Ambassador","Vol
 
 export const GOAL_CATEGORIES = ["Community outreach","Membership referrals","Partnership leads","Event participation","Event development","Volunteer recruitment","Program promotion","Workforce referrals","Educational outreach","Youth engagement","Social media engagement","Training completion","Other"];
 
-export const GOAL_STATUSES = ["Not Started","In Progress","Achieved","Partially Achieved","Not Achieved","Deferred"];
+export const GOAL_STATUSES = ["Not Started","In Progress","Needs Support","Achieved","Partially Achieved","Not Achieved","Deferred"];
 
 export const APP_STATUSES = ["Submitted","New","Under Review","More Information Requested","Interview Requested","Interview Scheduled","Recommended","Approved","Waitlisted","Declined","Withdrawn","Converted to Member","Archived"];
 
@@ -30,6 +30,8 @@ export const STATUS_COLORS = {
   "Declined": "bg-rose-100 text-rose-700", "Converted to Member": "bg-emerald-100 text-emerald-700",
   "Achieved": "bg-emerald-100 text-emerald-700", "In Progress": "bg-amber-100 text-amber-700",
   "Not Started": "bg-slate-100 text-slate-600", "Scheduled": "bg-brand-navy/10 text-brand-navy",
+  "Needs Support": "bg-rose-100 text-rose-700", "Deferred": "bg-orange-100 text-orange-700",
+  "Partially Achieved": "bg-amber-100 text-amber-700", "Not Achieved": "bg-rose-100 text-rose-700",
   "Completed": "bg-emerald-100 text-emerald-700", "active": "bg-emerald-100 text-emerald-700",
   "suspended": "bg-rose-100 text-rose-700",
 };

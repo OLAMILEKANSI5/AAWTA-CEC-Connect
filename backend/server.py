@@ -2928,6 +2928,45 @@ async def get_event_reports(event_id: str, user=Depends(get_current_user)):
     return reports
 
 # ---------------- goals ----------------
+SIGNIFICANT_GOAL_STATUSES = {"Achieved", "Deferred", "Needs Support"}
+
+async def _goal_change_ops(g, upd, note_text, user):
+    """Build $push history + note ops for a goal change. Returns (push_ops, changed_status_or_None)."""
+    now = now_iso()
+    hist = []
+    old_status, old_progress = g.get("status"), g.get("progress", 0)
+    new_status = upd.get("status", old_status)
+    new_progress = upd.get("progress", old_progress)
+    status_changed = "status" in upd and new_status != old_status
+    if "progress" in upd and new_progress != old_progress:
+        hist.append({"id": new_id("gh"), "event": f"Progress changed to {new_progress}%", "actor": user["name"], "created_at": now})
+    if status_changed:
+        hist.append({"id": new_id("gh"), "event": f"Status changed to {new_status}", "actor": user["name"], "created_at": now})
+    note = None
+    if note_text and note_text.strip():
+        note = {"id": new_id("gn"), "text": note_text.strip(), "author_name": user["name"], "author_role": user["role"],
+                "status": new_status, "progress": new_progress, "created_at": now}
+        hist.append({"id": new_id("gh"), "event": "Note added", "actor": user["name"], "created_at": now})
+    push = {}
+    if hist:
+        push["history"] = {"$each": hist}
+    if note:
+        push["notes"] = note
+    return push, (new_status if status_changed else None)
+
+async def _notify_leadership_goal(g, member, status, user):
+    if status not in SIGNIFICANT_GOAL_STATUSES:
+        return
+    mname = (member or {}).get("name") or user["name"]
+    link = f"/portal/members/{member['id']}" if member else "/portal/goals"
+    title = f"Goal update: {status}"
+    body = f"{mname} marked goal '{g['title']}' as {status}."
+    for lid in await _leadership_user_ids():
+        await notify_user(lid, title, body, link, "warning" if status == "Needs Support" else "info", "Goals")
+    await notify_admins(f"Goal {status}: {g['title']}", title,
+                        f"<p><strong>{mname}</strong> updated the goal <strong>{g['title']}</strong> to <strong>{status}</strong>.</p>"
+                        f"<p>Category: {g.get('category','—')} · Progress: {g.get('progress',0)}%</p>")
+
 class GoalIn(BaseModel):
     title: str
     description: Optional[str] = ""
@@ -2950,7 +2989,9 @@ async def create_goal(payload: GoalIn, user=Depends(get_current_user)):
     goal = {"id": new_id("goal"), "title": payload.title, "description": payload.description, "category": payload.category,
             "target": payload.target, "progress": 0, "due_date": payload.due_date, "member_id": member_id,
             "status": status, "proposed_by_member": proposed, "approved": user["role"] in STAFF_ROLES,
-            "member_comments": [], "leadership_comments": [], "created_by": user["name"], "created_at": now_iso()}
+            "member_comments": [], "leadership_comments": [], "notes": [],
+            "history": [{"id": new_id("gh"), "event": "Goal created", "actor": user["name"], "created_at": now_iso()}],
+            "created_by": user["name"], "created_at": now_iso()}
     await db.goals.insert_one(dict(goal))
     await log_audit(user, "goal_created", "goal", goal["id"])
     if member_id:
@@ -2969,17 +3010,60 @@ async def list_goals(user=Depends(get_current_user), member_id: Optional[str] = 
 async def update_goal(goal_id: str, payload: Dict[str, Any], user=Depends(get_current_user)):
     g = await db.goals.find_one({"id": goal_id}, {"_id": 0})
     if not g: raise HTTPException(404, "Not found")
+    member = await db.members.find_one({"id": g.get("member_id")}, {"_id": 0}) if g.get("member_id") else None
     if user["role"] not in STAFF_ROLES:
         m = await db.members.find_one({"user_id": user["user_id"]}, {"_id": 0})
         if not m or g.get("member_id") != m["id"]:
             raise HTTPException(403, "Forbidden")
         payload.pop("approved", None)  # members cannot self-approve goals
+    note_text = payload.pop("note", None)
     allowed = {"progress", "status", "target", "description", "due_date", "approved", "evidence_file_id"}
     upd = {k: v for k, v in payload.items() if k in allowed}
-    await db.goals.update_one({"id": goal_id}, {"$set": upd})
+    push, changed_status = await _goal_change_ops(g, upd, note_text, user)
+    ops = {}
+    if upd: ops["$set"] = upd
+    if push: ops["$push"] = push
+    if ops:
+        await db.goals.update_one({"id": goal_id}, ops)
     await log_audit(user, "goal_updated", "goal", goal_id, upd)
     if upd.get("status") == "Achieved":
         await add_timeline("member", g["member_id"], f"Goal achieved: {g['title']}", user)
+    if changed_status:
+        await _notify_leadership_goal(g, member, changed_status, user)
+    return await db.goals.find_one({"id": goal_id}, {"_id": 0})
+
+class GoalNoteIn(BaseModel):
+    note: Optional[str] = ""
+    status: Optional[str] = None
+    progress: Optional[int] = None
+
+@api_router.post("/goals/{goal_id}/notes")
+async def add_goal_note(goal_id: str, payload: GoalNoteIn, user=Depends(get_current_user)):
+    """Add a progress note to a goal, optionally changing status/progress in the same submit. History is preserved."""
+    g = await db.goals.find_one({"id": goal_id}, {"_id": 0})
+    if not g: raise HTTPException(404, "Not found")
+    member = await db.members.find_one({"id": g.get("member_id")}, {"_id": 0}) if g.get("member_id") else None
+    if user["role"] not in STAFF_ROLES:
+        m = await db.members.find_one({"user_id": user["user_id"]}, {"_id": 0})
+        if not m or g.get("member_id") != m["id"]:
+            raise HTTPException(403, "Forbidden")
+    has_note = bool(payload.note and payload.note.strip())
+    if not has_note and payload.status is None and payload.progress is None:
+        raise HTTPException(400, "Nothing to update")
+    upd = {}
+    if payload.status is not None: upd["status"] = payload.status
+    if payload.progress is not None: upd["progress"] = payload.progress
+    push, changed_status = await _goal_change_ops(g, upd, payload.note, user)
+    ops = {}
+    if upd: ops["$set"] = upd
+    if push: ops["$push"] = push
+    if ops:
+        await db.goals.update_one({"id": goal_id}, ops)
+    await log_audit(user, "goal_note_added", "goal", goal_id, upd)
+    if upd.get("status") == "Achieved":
+        await add_timeline("member", g["member_id"], f"Goal achieved: {g['title']}", user)
+    if changed_status:
+        await _notify_leadership_goal(g, member, changed_status, user)
     return await db.goals.find_one({"id": goal_id}, {"_id": 0})
 
 # ---------------- activity reports & volunteer hours ----------------

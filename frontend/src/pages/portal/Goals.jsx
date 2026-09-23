@@ -2,13 +2,13 @@ import React, { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Target, Plus, Clock } from "lucide-react";
 import { api, useAuth } from "@/auth";
-import { PageTitle, Loading, EmptyState, StatusBadge } from "@/components/shared";
+import { PageTitle, Loading, EmptyState } from "@/components/shared";
 import { Button } from "@/components/ui/button";
-import { Progress } from "@/components/ui/progress";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
 import { Field, SelectField } from "@/components/FormFields";
 import { GOAL_CATEGORIES, GOAL_STATUSES } from "@/lib/constants";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { GoalCard } from "@/components/GoalCard";
 
 const STAFF = ["super_admin", "director", "administrator"];
 
@@ -22,14 +22,12 @@ export default function Goals() {
   const [repOpen, setRepOpen] = useState(false);
   const [f, setF] = useState({ category: "Community outreach" });
   const [rep, setRep] = useState({});
-  const [drag, setDrag] = useState({});
   const on = (k, v) => setF((p) => ({ ...p, [k]: v }));
 
   const load = () => { api.get("/goals").then((r) => setGoals(r.data)).catch(() => setGoals([])); api.get("/activity-reports").then((r) => setReports(r.data)).catch(() => {}); };
   useEffect(() => { load(); if (isStaff) api.get("/members").then((r) => setMembers(r.data)).catch(() => {}); }, [isStaff]);
 
   const create = async () => { if (!f.title) { toast.error("Title required"); return; } try { await api.post("/goals", f); toast.success(isStaff ? "Goal assigned" : "Goal proposed"); setOpen(false); setF({ category: "Community outreach" }); load(); } catch { toast.error("Failed"); } };
-  const updateGoal = async (id, upd) => { await api.put(`/goals/${id}`, upd); load(); };
   const submitReport = async () => { if (!rep.month || !rep.summary) { toast.error("Month and summary required"); return; } try { await api.post("/activity-reports", { ...rep, hours: rep.hours ? Number(rep.hours) : null }); toast.success("Report submitted"); setRepOpen(false); setRep({}); load(); } catch { toast.error("Failed"); } };
 
   return (
@@ -64,15 +62,7 @@ export default function Goals() {
         <TabsContent value="goals">
           {goals === null ? <Loading /> : goals.length === 0 ? <EmptyState icon={Target} title="No goals yet" /> : (
             <div className="grid md:grid-cols-2 gap-4">{goals.map((g) => (
-              <div key={g.id} className="bg-white border border-slate-200 rounded-xl p-5" data-testid={`goal-${g.id}`}>
-                <div className="flex items-start justify-between"><div><p className="font-head font-semibold text-brand-navy">{g.title}</p><p className="text-xs text-slate-400">{g.category}{g.target ? ` · Target: ${g.target}` : ""}</p></div><StatusBadge status={g.status} /></div>
-                {g.description && <p className="text-sm text-slate-600 mt-2">{g.description}</p>}
-                <div className="mt-3"><Progress value={g.progress || 0} className="h-2" /><p className="text-xs text-slate-400 mt-1">{g.progress || 0}% complete{g.due_date ? ` · due ${new Date(g.due_date).toLocaleDateString()}` : ""}</p></div>
-                <div className="flex items-center gap-2 mt-3">
-                  <input type="range" min="0" max="100" value={drag[g.id] ?? g.progress ?? 0} onChange={(e) => setDrag((p) => ({ ...p, [g.id]: Number(e.target.value) }))} onMouseUp={(e) => updateGoal(g.id, { progress: Number(e.target.value) })} onTouchEnd={(e) => updateGoal(g.id, { progress: Number(e.target.value) })} className="flex-1 accent-[#D6189B]" data-testid={`goal-progress-${g.id}`} />
-                  <select value={g.status} onChange={(e) => updateGoal(g.id, { status: e.target.value })} className="rounded-md border border-input px-2 py-1 text-xs" data-testid={`goal-status-${g.id}`}>{GOAL_STATUSES.map((s) => <option key={s}>{s}</option>)}</select>
-                </div>
-              </div>
+              <GoalCard key={g.id} goal={g} onChange={load} />
             ))}</div>
           )}
         </TabsContent>
