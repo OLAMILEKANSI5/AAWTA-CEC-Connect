@@ -309,12 +309,7 @@ async def submit_application(payload: ApplicationIn, request: Request):
     # emails
     settings = await get_settings_doc()
     applicant_name = app_doc["name"]
-    conf_body = (
-        ep(f"Hi {applicant_name},") +
-        ep(f"Thank you for your submission to the AAWTA Community Engagement Committee. Your reference number is <strong>{ref}</strong>.") +
-        ep("Our team will review your submission and follow up soon. Submitting this form does not automatically grant portal access; access is granted after approval or invitation.")
-    )
-    asyncio.create_task(send_safe(to=email, subject=f"We received your CEC Connect submission ({ref})", title="Submission Received", body_html=conf_body))
+    asyncio.create_task(send_template_email("application_received", "application", app_doc["id"], actor=None))
     admin_body = (
         ep(f"A new <strong>{payload.type}</strong> submission was received.") +
         ep(f"Reference: <strong>{ref}</strong><br>Name: {applicant_name}<br>Email: {email}<br>State: {app_doc.get('state') or 'N/A'}") +
@@ -359,8 +354,10 @@ async def update_app_status(app_id: str, payload: StatusUpdate, user=Depends(req
     await add_timeline("application", app_id, f"Status changed to {payload.status}", user)
     await log_audit(user, "application_status_change", "application", app_id, entry)
     # notify applicant on major decisions
-    subj_map = {"Approved": "approved", "Waitlisted": "waitlisted", "Declined": "declined", "More Information Requested": "needs more information"}
-    if payload.status in subj_map:
+    subj_map = {"Waitlisted": "waitlisted", "Declined": "declined", "More Information Requested": "needs more information"}
+    if payload.status == "Approved" and a.get("type") in ("ambassador", "volunteer"):
+        asyncio.create_task(send_template_email("application_approved", "application", app_id, actor=user))
+    elif payload.status in subj_map:
         body = ep(f"Hi {a['name']},") + ep(f"Your CEC application <strong>{a['ref']}</strong> status is now: <strong>{payload.status}</strong>.") + (ep(payload.note) if payload.note else "")
         asyncio.create_task(send_safe(to=a["email"], subject=f"Your CEC application update ({a['ref']})", title="Application Update", body_html=body))
     return {"ok": True}
@@ -403,22 +400,31 @@ async def _assign_onboarding_docs(member, role, user):
 
 
 async def _send_welcome(member, role):
-    settings = await get_settings_doc()
-    base = PUBLIC_BASE_URL
-    inner = ep(f"Hi {hesc(member.get('name') or 'there')}, congratulations — you've been approved as a CEC <strong>{hesc(role)}</strong>!")
-    inner += ep("Here's how to get started:")
-    inner += ("<ul style='color:#334155;font-size:14px;line-height:1.7'>"
-              "<li>Activate or access your CEC Connect account</li><li>Complete your profile and upload a photo</li>"
-              "<li>Review and sign your assigned onboarding documents</li><li>Review your onboarding checklist</li>"
-              "<li>Set your first monthly goals and attend orientation</li></ul>")
-    inner += ep(f'<a href="{base}/portal" style="background:#D6189B;color:#fff;padding:10px 18px;border-radius:999px;text-decoration:none;font-weight:bold">Access CEC Connect</a>')
-    inner += ep("Sign in with the Google account tied to this email — no password needed.")
-    inner += ep(f"Questions? Contact AAWTA at {hesc(settings.get('email') or '')}.")
-    log = await log_and_send(to=member["email"], subject="Welcome to the AAWTA CEC — Next Steps", inner_html=inner,
-                             title="Welcome to CEC Connect", template="welcome", related_type="member", related_id=member["id"])
+    # Sends the onboarding invitation using the Group 1 template system + records a communication.
+    log = await send_template_email("onboarding_profile", "member", member["id"], actor=None, force=True)
     if member.get("user_id"):
         await notify_user(member["user_id"], "Welcome to CEC Connect!", f"You're approved as a {role}. Complete your onboarding to get started.", "/portal", "success")
     return log
+
+
+APP_APPROVED_STATUSES = ("Approved", "Recommended", "Recommended for Approval")
+
+
+async def _do_convert(a, user, approved_at=None):
+    role = "ambassador" if a["type"] == "ambassador" else "volunteer"
+    member = await create_member_record(
+        name=a["name"], email=a["email"], role=role, state=a.get("state"),
+        data=a.get("data", {}), created_by=user, source_application=a["id"],
+    )
+    await db.members.update_one({"id": member["id"]}, {"$set": {
+        "approved_at": approved_at or now_iso(), "onboarding_stage": "profile_incomplete",
+        "onboarding_stage_since": now_iso(), "fully_onboarded_notified": False}})
+    await _assign_onboarding_docs(member, role, user)
+    await _send_welcome(member, role)  # fires the onboarding_profile template + records communication
+    await db.applications.update_one({"id": a["id"]}, {"$set": {"status": "Converted to Member", "member_id": member["id"], "updated_at": now_iso()}})
+    await add_timeline("application", a["id"], "Converted to member", user)
+    await log_audit(user, "application_converted", "application", a["id"], {"member_id": member["id"]})
+    return await db.members.find_one({"id": member["id"]}, {"_id": 0})
 
 
 @api_router.post("/applications/{app_id}/convert")
@@ -426,19 +432,135 @@ async def convert_to_member(app_id: str, user=Depends(require_roles(*LEADERSHIP_
     a = await db.applications.find_one({"id": app_id}, {"_id": 0})
     if not a:
         raise HTTPException(404, "Not found")
-    if a.get("status") not in ("Approved", "Recommended", "Recommended for Approval"):
+    if a.get("status") not in APP_APPROVED_STATUSES:
         raise HTTPException(400, "Only an approved application can be converted to a member")
-    role = "ambassador" if a["type"] == "ambassador" else "volunteer"
-    member = await create_member_record(
-        name=a["name"], email=a["email"], role=role, state=a.get("state"),
-        data=a.get("data", {}), created_by=user, source_application=app_id,
-    )
-    await _assign_onboarding_docs(member, role, user)
-    await _send_welcome(member, role)
-    await db.applications.update_one({"id": app_id}, {"$set": {"status": "Converted to Member", "member_id": member["id"], "updated_at": now_iso()}})
-    await add_timeline("application", app_id, "Converted to member", user)
-    await log_audit(user, "application_converted", "application", app_id, {"member_id": member["id"]})
-    return member
+    if a.get("member_id"):
+        raise HTTPException(400, "This application has already been converted")
+    return await _do_convert(a, user)
+
+
+@api_router.post("/applications/{app_id}/approve-onboard")
+async def approve_and_onboard(app_id: str, user=Depends(require_roles(*LEADERSHIP_ROLES))):
+    a = await db.applications.find_one({"id": app_id}, {"_id": 0})
+    if not a:
+        raise HTTPException(404, "Not found")
+    if a.get("type") not in ("ambassador", "volunteer"):
+        raise HTTPException(400, "Only ambassador and volunteer applications can be onboarded")
+    if a.get("member_id") or a.get("status") == "Converted to Member":
+        raise HTTPException(400, "This applicant has already been onboarded")
+    approved_at = now_iso()
+    if a.get("status") not in APP_APPROVED_STATUSES:
+        entry = {"status": "Approved", "note": "Approved via Approve & Onboard", "by": user["name"], "at": approved_at}
+        await db.applications.update_one({"id": app_id}, {"$set": {"status": "Approved", "updated_at": approved_at}, "$push": {"decision_history": entry}})
+        await add_timeline("application", app_id, "Status changed to Approved", user)
+        await log_audit(user, "application_status_change", "application", app_id, entry)
+        a["status"] = "Approved"
+    # approval notification (Group 1 template) — recorded on the applicant's communication history
+    await send_template_email("application_approved", "application", app_id, actor=user, force=True)
+    member = await _do_convert(a, user, approved_at=approved_at)
+    await log_audit(user, "approve_and_onboard", "application", app_id, {"member_id": member["id"]})
+    return {"member": member, "member_id": member["id"]}
+
+
+# ---------------- onboarding pipeline ----------------
+STAGE_ORDER = ["applied", "under_review", "approved", "profile_incomplete", "docs_needed", "thirty_day", "fully_onboarded"]
+STAGE_LABELS = {"applied": "Applied", "under_review": "Under Review", "approved": "Approved",
+                "profile_incomplete": "Profile Incomplete", "docs_needed": "Documents/Signatures Needed",
+                "thirty_day": "30-Day Onboarding", "fully_onboarded": "Fully Onboarded"}
+STALL_DAYS = {"applied": 7, "under_review": 10, "approved": 5, "profile_incomplete": 7, "docs_needed": 7, "thirty_day": 30, "fully_onboarded": None}
+APP_APPLIED = {"New", "Submitted"}
+APP_REVIEW = {"Under Review", "More Information Requested", "Interview Requested", "Interview Scheduled"}
+PROFILE_STEPS = ["Complete profile", "Upload headshot"]
+
+
+def _stage_days(iso_str, now):
+    if not iso_str:
+        return 0
+    try:
+        dt = datetime.fromisoformat(iso_str)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return max(0, (now - dt).days)
+    except Exception:
+        return 0
+
+
+async def _member_onboarding_state(m):
+    onboarding = m.get("onboarding") or []
+    total = len(onboarding) or 1
+    done = sum(1 for o in onboarding if o.get("done"))
+    profile_done = all(any(o.get("step") == ps and o.get("done") for o in onboarding) for ps in PROFILE_STEPS)
+    role = m.get("role")
+    uid = m.get("user_id")
+    docs = await db.documents.find({"status": {"$ne": "archived"},
+                                    "$or": [{"assigned_to": m["id"]}, {"auto_onboarding": True, "onboarding_profiles": role}]}, {"_id": 0}).to_list(500)
+    unsigned = []
+    for d in docs:
+        signed = bool(await db.signatures.find_one({"document_id": d["id"], "user_id": uid})) if uid else False
+        if not signed:
+            unsigned.append(d.get("title") or "Untitled document")
+    all_done = done >= total
+    if all_done:
+        stage = "fully_onboarded"
+    elif not profile_done:
+        stage = "profile_incomplete"
+    elif unsigned:
+        stage = "docs_needed"
+    else:
+        stage = "thirty_day"
+    outstanding = []
+    if not profile_done:
+        outstanding.append("Complete profile & upload photo")
+    outstanding += [f"Sign: {t}" for t in unsigned]
+    if stage == "thirty_day":
+        outstanding += [o["step"] for o in onboarding if not o.get("done") and o.get("step") not in PROFILE_STEPS]
+    return stage, outstanding, round(done / total * 100), all_done
+
+
+def _pipeline_entry(kind, id_, name, role, stage, outstanding, approved_at, since, pct, now, email):
+    days = _stage_days(since, now)
+    stall = STALL_DAYS.get(stage)
+    return {"kind": kind, "id": id_, "name": name, "role": role, "stage": stage, "stage_label": STAGE_LABELS[stage],
+            "outstanding": outstanding, "approved_at": approved_at, "days_in_stage": days, "progress_pct": pct,
+            "stalled": bool(stall and days >= stall),
+            "link": f"/portal/members/{id_}" if kind == "member" else f"/portal/applications/{id_}", "email": email}
+
+
+@api_router.get("/onboarding/pipeline")
+async def onboarding_pipeline(user=Depends(require_roles(*STAFF_ROLES)), role: Optional[str] = None, stage: Optional[str] = None):
+    now = datetime.now(timezone.utc)
+    entries = []
+    aq = {"type": {"$in": [role] if role else ["ambassador", "volunteer"]},
+          "status": {"$nin": ["Converted to Member", "Declined", "Withdrawn", "Archived"]}}
+    async for a in db.applications.find(aq, {"_id": 0}):
+        st = a.get("status")
+        if st in APP_APPLIED:
+            s = "applied"
+        elif st in APP_REVIEW:
+            s = "under_review"
+        elif st in APP_APPROVED_STATUSES:
+            s = "approved"
+        else:
+            continue
+        since = a.get("updated_at") or a.get("created_at")
+        entries.append(_pipeline_entry("application", a["id"], a.get("name"), a.get("type"), s,
+                                        [f"Awaiting {STAGE_LABELS[s].lower()}"], None, since, None, now, a.get("email")))
+    mq = {"account_status": {"$ne": "deactivated"}, "role": {"$in": [role] if role else ["ambassador", "volunteer"]}}
+    async for m in db.members.find(mq, {"_id": 0}):
+        s, outstanding, pct, all_done = await _member_onboarding_state(m)
+        if m.get("onboarding_stage") != s or not m.get("onboarding_stage_since"):
+            await db.members.update_one({"id": m["id"]}, {"$set": {"onboarding_stage": s, "onboarding_stage_since": now_iso()}})
+            m["onboarding_stage_since"] = now_iso()
+        since = m.get("onboarding_stage_since") or m.get("approved_at") or m.get("start_date") or m.get("created_at")
+        entries.append(_pipeline_entry("member", m["id"], m.get("name"), m.get("role"), s, outstanding,
+                                       m.get("approved_at") or m.get("start_date"), since, pct, now, m.get("email")))
+    counts = {s: 0 for s in STAGE_ORDER}
+    for e in entries:
+        counts[e["stage"]] += 1
+    if stage:
+        entries = [e for e in entries if e["stage"] == stage]
+    entries.sort(key=lambda e: (STAGE_ORDER.index(e["stage"]), -e["days_in_stage"]))
+    return {"entries": entries, "counts": counts, "stage_order": STAGE_ORDER, "stage_labels": STAGE_LABELS}
 
 # ---------------- members ----------------
 ONBOARDING_STEPS = [
@@ -589,6 +711,12 @@ async def update_onboarding(member_id: str, payload: Dict[str, Any], user=Depend
             o["completed_at"] = now_iso() if done else None
     await db.members.update_one({"id": member_id}, {"$set": {"onboarding": onboarding}})
     await add_timeline("member", member_id, f"Onboarding step '{step}' {'completed' if done else 'reopened'}", user)
+    # fully-onboarded trigger (only once, and only when every required step is complete)
+    if all(o.get("done") for o in onboarding) and not m.get("fully_onboarded_notified"):
+        await db.members.update_one({"id": member_id}, {"$set": {"fully_onboarded_notified": True, "onboarding_stage": "fully_onboarded", "onboarding_stage_since": now_iso()}})
+        asyncio.create_task(send_template_email("fully_onboarded_welcome", "member", member_id, actor=None))
+        await add_timeline("member", member_id, "Fully onboarded", user)
+        await log_audit(user, "member_fully_onboarded", "member", member_id)
     return {"ok": True}
 
 @api_router.put("/members/{member_id}/status")

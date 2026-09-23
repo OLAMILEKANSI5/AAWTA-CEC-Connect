@@ -25,6 +25,10 @@ export default function ApplicationDetail() {
   const setStatus = async (status) => { await api.put(`/applications/${id}/status`, { status }); toast.success(`Status: ${status}`); load(); };
   const addNote = async () => { if (!note.trim()) return; await api.post(`/applications/${id}/notes`, { text: note, visibility: vis }); setNote(""); toast.success("Note added"); load(); };
   const convert = async () => { const r = await api.post(`/applications/${id}/convert`); toast.success("Converted to member"); navigate(`/portal/members/${r.data.id}`); };
+  const approveOnboard = async () => {
+    try { const r = await api.post(`/applications/${id}/approve-onboard`); toast.success("Approved & onboarding started"); navigate(`/portal/members/${r.data.member_id}`); }
+    catch (e) { toast.error(e?.response?.data?.detail || "Could not onboard"); }
+  };
 
   if (!a) return <Loading />;
   const d = a.data || {};
@@ -93,6 +97,9 @@ export default function ApplicationDetail() {
             <select data-testid="status-select" value={a.status} onChange={(e) => setStatus(e.target.value)} className="w-full rounded-md border border-input px-3 py-2 text-sm">
               {APP_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
             </select>
+            {a.type !== "inquiry" && a.status !== "Converted to Member" && !a.member_id && LEADERSHIP.includes(user?.role) && (
+              <Button onClick={approveOnboard} data-testid="approve-onboard-btn" className="w-full mt-3 rounded-full bg-brand-magenta hover:bg-brand-pink"><CheckCircle2 size={16} className="mr-1" /> Approve &amp; Onboard</Button>
+            )}
             {["Approved", "Recommended"].includes(a.status) && a.type !== "inquiry" && LEADERSHIP.includes(user?.role) && (
               <Button onClick={convert} data-testid="convert-btn" className="w-full mt-3 rounded-full bg-emerald-600 hover:bg-emerald-700"><UserPlus size={16} className="mr-1" /> Convert to Member</Button>
             )}

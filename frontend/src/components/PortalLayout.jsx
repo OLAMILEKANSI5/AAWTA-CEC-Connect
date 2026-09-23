@@ -3,7 +3,7 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
   LayoutDashboard, FileText, Users, UserCircle, ClipboardCheck, FileSignature,
   MessageSquare, Megaphone, Calendar, Target, BookOpen, BarChart3, ScrollText,
-  Settings as SettingsIcon, ShieldCheck, LogOut, Bell, Menu, X, Mail,
+  Settings as SettingsIcon, ShieldCheck, LogOut, Bell, Menu, X, Mail, Workflow,
 } from "lucide-react";
 import { Logo } from "@/components/Logo";
 import { useAuth, api } from "@/auth";
@@ -17,6 +17,7 @@ const NAV_ITEMS = [
   { to: "/portal", label: "Dashboard", icon: LayoutDashboard, roles: "all" },
   { to: "/portal/applications", label: "Applications", icon: FileText, roles: STAFF },
   { to: "/portal/members", label: "Members", icon: Users, roles: STAFF },
+  { to: "/portal/onboarding-board", label: "Onboarding Board", icon: Workflow, roles: STAFF },
   { to: "/portal/profile", label: "My Profile", icon: UserCircle, roles: ["ambassador", "volunteer"] },
   { to: "/portal/onboarding", label: "Onboarding", icon: ClipboardCheck, roles: ["ambassador", "volunteer"] },
   { to: "/portal/documents", label: "Documents", icon: FileSignature, roles: "all" },
