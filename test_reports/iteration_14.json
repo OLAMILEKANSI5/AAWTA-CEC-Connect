@@ -1,0 +1,32 @@
+{
+  "summary": "Full backend + UI regression on Group 1 (Notification Template Editor + Applicant/Member Messaging). 21/21 pytest cases pass (1 skipped: no application without an email on record to trigger 400). All 9 templates present, list/get/preview/update/test-send/404/400 branches verified. /api/comms preview + send + history verified for email, portal, and both channels, plus invalid channel/subject/body/subject_type 400s. UI: /portal/templates renders 9 cards grouped by category with Auto/Manual badges, preview dialog shows rendered HTML with sample context, edit dialog saves and test-send to delivered@resend.dev succeeds. Application detail Communications tab loads CommsPanel, template select auto-fills subject/body via /comms/preview, Email+Portal channel sends and appears in history (newest first) with template chip and Sent status. No blocking issues found.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Dialogs (TemplateEditor preview/edit, CommsPanel Send Message)", "issues": ["Radix DialogContent missing aria-describedby/Description — a11y warning in console; non-blocking"]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_group1_comms_templates.py",
+    "/app/test_reports/pytest/group1_it14.xml"
+  ],
+  "action_items": [
+    "(Optional a11y) Add DialogDescription (or aria-describedby) to Send Message, template Preview, and template Edit dialogs to silence Radix warning."
+  ],
+  "critical_code_review_comments": [
+    "server.py is now 3128 lines — consider splitting into modules (notifications, comms, applications, events) for maintainability.",
+    "/api/comms only refreshes status from email_log for rows that have email_log_id; that's correct. However the initial insert stores status from log['status'] which is already 'sent'/'failed'; delivered/opened rely on Resend webhooks (documented).",
+    "TemplateUpdate accepts partial updates but does not sanitize empty strings; sending subject='' would overwrite. Not blocking (only leadership can edit) but consider min_length validation.",
+    "administrator role blocking on PUT was NOT tested end-to-end (no admin session available in this env). Backend uses require_roles(*LEADERSHIP_ROLES) which excludes 'administrator' per code inspection; the branch is verified by code review only."
+  ],
+  "updated_files": ["/app/backend/tests/test_group1_comms_templates.py"],
+  "success_rate": {"backend": "100% (21/21, 1 env-skipped)", "frontend": "100% happy path"},
+  "test_credentials": "Authorization: Bearer tok_admtest (super_admin). Cookie session_token=tok_admtest for portal.",
+  "seed_data_creation": "Ran /app/backend/tests/seed_badge.py to guarantee admin session + seeded events/regs/applications.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Group 1 (templates + comms) endpoints and UI are stable. Reusable pytest suite lives at /app/backend/tests/test_group1_comms_templates.py. Use application id from GET /api/applications?limit=1 for comms tests. Use to=delivered@resend.dev for successful test-sends. Admin session token tok_admtest.",
+  "rca of the issue": "N/A — no failures. Initial UI test mistakenly clicked option index 0 which is 'Custom message' (no autofill by design); rerun with 'Application Received' produced correct autofill and successful send."
+}

@@ -124,3 +124,23 @@ Part of a 7-phase event-management overhaul (A→G). Decisions: paid events use 
 - Added email retry/backoff (3 attempts) in log_and_send to survive transient provider "no message id" responses.
 - Remaining (optional/low, non-blocking): DocumentEditIn for true PATCH (title/category still required on PUT); a11y aria-describedby on Documents dialogs; 'Assign to all active' data-testid; move audience validation into a Pydantic validator; split 2839-line server.py into routers; remove dead 'intern' role branch or add the role.
 - Known infra flake: Emergent email provider intermittently returns no message id (rate limit) — now mitigated with retry; not a product bug.
+
+## Implemented (2026-06, Group 1 — Communication Core)
+Part of a large Ambassador/Volunteer lifecycle overhaul (build order: Messaging → Templates → Approval Automation → Onboarding Dashboard → Service Hours → Event fixes → Check-In Assignment → iOS readiness → E2E). User approved seeding 9 templates with on-brand placeholder copy (official AAWTA wording to be pasted later via editor).
+### Notification Template Editor
+- New collection `notification_templates` (key, name, category, subject, body plain-text w/ {{placeholders}}, mode automatic|manual, trigger, enabled, include_button, button_label, is_system). Lazy-seeded 9 defaults via `ensure_templates()`: application_received, application_approved, onboarding_profile, missing_requirements, onboarding_reminder, fully_onboarded_welcome, volunteer_event_assignment, ambassador_update, general_communication.
+- Endpoints: GET /api/notification-templates ({templates, placeholders}); GET/PUT /api/notification-templates/{key} (PUT leadership-only, invalid mode 400, sets updated_by); POST .../preview (rendered subject+html w/ sample ctx); POST .../test-send {to} (uses log_and_send, returns status).
+- Helpers: `_subst` ({{var}} regex), `_body_to_html` (paragraphs + optional portal button), `_comm_ctx` (builds real recipient context from application/member or generic sample), `send_template_email` (trigger-driven send + comm log — WIRED IN GROUP 2).
+- Frontend `/portal/templates` (TemplateEditor.jsx, STAFF nav 'Message Templates'): cards grouped by category w/ Auto/Manual + enabled badges, Preview dialog (rendered HTML), Edit dialog (subject/body, placeholder chips, enabled + automatic toggles, portal button + label), Test-send field. Editing gated to super_admin/director (admin can view/test).
+### Applicant & Member Messaging + Communication History
+- New collection `communications` (subject_type application|member, subject_id, channel email|portal|both, template_key/name, subject, body, to_email, sent_by, status, email_log_id, provider_id, created_at).
+- Endpoints: POST /api/comms/preview (fills template w/ real recipient data); POST /api/comms/send (email/portal/both, records comm, timeline + audit, validations: invalid channel/subject_type 400, empty subject/body 400, email w/o address 400); GET /api/comms?subject_type=&subject_id= (history newest-first, delivery status refreshed from email_log).
+- Frontend `CommsPanel.jsx` reused in ApplicationDetail + MemberDetail 'Communications' tab: Send Message dialog (pick template auto-fills subject/body, edit, choose channel, optional portal button), history list w/ status/sender/template/date.
+- Verified: iteration_14 — 21/21 backend pytest + full UI flows pass. Reusable suite at /app/backend/tests/test_group1_comms_templates.py. Fixed non-blocking a11y (added DialogDescription to Send Message / template Preview + Edit dialogs).
+
+## Next Tasks (this overhaul)
+- GROUP 2: Approve → auto approval email + onboarding invite (wire send_template_email to application_approved/member_converted triggers) + Live Onboarding Dashboard (Applied→Under Review→Approved→Profile Incomplete→Docs Needed→30-Day→Fully Onboarded).
+- GROUP 3: Volunteer service hours (clock in/out, manual submit, admin approve/edit/reject, totals/filters/CSV, milestones 20/50/100+, intern-reusable) + Check-In integration; Check-In Volunteer Assignment UI (checkin-assignees endpoint exists).
+- GROUP 4: Resources Calendar button → /events; fix event image not showing on published events; Edit/Update published events (all fields).
+- GROUP 5: Mobile/iOS readiness (responsive/touch pass, role-scoped mobile nav, deep-link + push-ready architecture, Apple Beta Readiness matrix).
+- GROUP 6: E2E workflow testing; then P2 (Google Calendar sync, server.py router refactor, recognition/certificates, reporting enhancements).

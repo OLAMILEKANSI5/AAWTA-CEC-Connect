@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 const STATUS_STYLES = {
@@ -94,7 +94,7 @@ export const CommsPanel = ({ subjectType, subjectId }) => {
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-lg">
-          <DialogHeader><DialogTitle>Send Message</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>Send Message</DialogTitle><DialogDescription>Compose a message to this recipient. Placeholders are filled in automatically.</DialogDescription></DialogHeader>
           <div className="space-y-3">
             <div>
               <Label className="text-xs">Template (optional)</Label>

@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 
 const LEADERSHIP = ["super_admin", "director"];
 
@@ -87,7 +87,7 @@ export default function TemplateEditor() {
       {/* Edit dialog */}
       <Dialog open={!!editing} onOpenChange={(o) => !o && setEditing(null)}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader><DialogTitle>{editing?.name}</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>{editing?.name}</DialogTitle><DialogDescription>Edit the wording, delivery mode, and portal button for this template.</DialogDescription></DialogHeader>
           {editing && (
             <div className="space-y-3">
               <div className="flex flex-wrap items-center gap-4">
@@ -127,7 +127,7 @@ export default function TemplateEditor() {
       {/* Preview dialog */}
       <Dialog open={!!preview} onOpenChange={(o) => !o && setPreview(null)}>
         <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader><DialogTitle className="flex items-center gap-2"><Mail size={16} /> {preview?.subject}</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle className="flex items-center gap-2"><Mail size={16} /> {preview?.subject}</DialogTitle><DialogDescription>Live preview with sample recipient data.</DialogDescription></DialogHeader>
           <div className="border border-slate-200 rounded-lg overflow-hidden" data-testid="tpl-preview-body" dangerouslySetInnerHTML={{ __html: preview?.html || "" }} />
         </DialogContent>
       </Dialog>
