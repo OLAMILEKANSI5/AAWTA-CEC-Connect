@@ -39,6 +39,7 @@ export default function Login() {
             Continue with Google
           </Button>
           <p className="text-xs text-slate-400 mt-5">Not a member yet? <button onClick={() => navigate("/apply")} className="text-brand-magenta font-medium hover:underline">Apply here</button></p>
+          <p className="text-[11px] text-slate-400 mt-4 leading-relaxed" data-testid="login-legal-ack">By continuing, you acknowledge AAWTA's <a href="https://aawta.org/terms-and-conditions" target="_blank" rel="noreferrer" className="text-brand-magenta underline underline-offset-2">Terms &amp; Conditions</a> and <a href="https://aawta.org/privacy-policy" target="_blank" rel="noreferrer" className="text-brand-magenta underline underline-offset-2">Privacy Policy</a>.</p>
         </div>
       </section>
     </PublicLayout>

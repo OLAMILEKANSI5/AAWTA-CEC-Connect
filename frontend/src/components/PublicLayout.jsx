@@ -104,8 +104,14 @@ export const PublicLayout = ({ children }) => {
             </ul>
           </div>
         </div>
-        <div className="border-t border-white/10 py-5 text-center text-xs text-white/50">
-          © {new Date().getFullYear()} African American Women Trucking Association — CEC Connect. All rights reserved.
+        <div className="border-t border-white/10 py-5 px-4 flex flex-col sm:flex-row items-center justify-center gap-x-4 gap-y-2 text-center text-xs text-white/50">
+          <span>© {new Date().getFullYear()} African American Women Trucking Association — CEC Connect. All rights reserved.</span>
+          <span className="hidden sm:inline text-white/20">|</span>
+          <span className="flex items-center gap-3">
+            <a href="https://aawta.org/terms-and-conditions" target="_blank" rel="noreferrer" data-testid="footer-terms" className="hover:text-white underline underline-offset-2">Terms &amp; Conditions</a>
+            <span className="text-white/20">|</span>
+            <a href="https://aawta.org/privacy-policy" target="_blank" rel="noreferrer" data-testid="footer-privacy" className="hover:text-white underline underline-offset-2">Privacy Policy</a>
+          </span>
         </div>
       </footer>
     </div>

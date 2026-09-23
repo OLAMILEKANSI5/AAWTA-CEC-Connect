@@ -126,6 +126,7 @@ export default function PublicEventDetail() {
               <label className="flex items-start gap-2 text-sm text-slate-600 cursor-pointer"><input type="checkbox" data-testid="opt-newsletter" checked={!!f.newsletter_opt_in} onChange={(ev) => on("newsletter_opt_in", ev.target.checked)} className="accent-[#D6189B] mt-0.5" /> Yes, I would like to receive the AAWTA newsletter.</label>
               <label className="flex items-start gap-2 text-sm text-slate-600 cursor-pointer"><input type="checkbox" data-testid="opt-events" checked={!!f.events_opt_in} onChange={(ev) => on("events_opt_in", ev.target.checked)} className="accent-[#D6189B] mt-0.5" /> Yes, I would like to receive information about upcoming AAWTA events, programs and opportunities.</label>
             </div>
+            <p className="text-xs text-slate-500 pt-2" data-testid="register-legal-ack">By submitting, you acknowledge AAWTA's <a href="https://aawta.org/terms-and-conditions" target="_blank" rel="noreferrer" className="text-brand-magenta underline underline-offset-2">Terms &amp; Conditions</a> and <a href="https://aawta.org/privacy-policy" target="_blank" rel="noreferrer" className="text-brand-magenta underline underline-offset-2">Privacy Policy</a>.</p>
           </div>
           <DialogFooter><Button onClick={register} disabled={submitting} data-testid="submit-register-btn" className="bg-brand-magenta hover:bg-brand-pink">{submitting ? "Submitting…" : "Confirm Registration"}</Button></DialogFooter>
         </DialogContent>

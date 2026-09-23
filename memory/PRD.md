@@ -172,8 +172,17 @@ Part of a large Ambassador/Volunteer lifecycle overhaul (build order: Messaging 
 - EventManage 'Volunteers' tab: searchable assignee checkboxes + Save. MemberDetail 'Service Hours' tab (MemberHoursTab.jsx): totals, certificate buttons, approve/reject.
 - Verified: iteration_17 — 21/21 new backend pytest + 47/48 regression + full UI (member & admin). Suite /app/backend/tests/test_group3_hours_certs_assign.py. Post-review fix: milestone reconcile on demote/delete (verified reject→revoke, re-approve→restore); assignable filters inactive users.
 
-## Next Tasks (this overhaul)
-- GROUP 5: Mobile/iOS readiness (responsive/touch pass, role-scoped mobile nav, deep-link + push-ready architecture, Apple Beta Readiness Ready/Needs-Work/Not-Yet matrix).
+## Implemented (2026-06, Legal Links + Programs enhancement)
+- Footer (PublicLayout): persistent **Terms & Conditions | Privacy Policy** links (aawta.org/terms-and-conditions, /privacy-policy) — responsive, on every public page. Acknowledgment "By submitting/continuing, you acknowledge AAWTA's Terms & Privacy" (clickable) added to Apply form, event registration dialog, and Login.
+- Programs & Community Impact page rebuilt (kept existing content): prominent **Driven Together Education Program** gradient hero with 2 CTAs (Explore Education Programs → dt-platform.emergent.host/programs, Take the FREE SMART Assessment → /intake) + SMART note; 9-card ecosystem grid (Education/Career, Workforce, Trucking, Community Outreach, Ambassador Leadership, Volunteer Service, Events, Youth/Workforce, Entrepreneurship); CTA band (Become an Ambassador, Volunteer, Explore Education, SMART Assessment, View Events) routing to correct pages/external links. Verified rendering on mobile.
+
+## Implemented (2026-06, Group 5 — Mobile / iOS Beta Readiness — initial pass)
+- index.html iOS web-app meta: viewport-fit=cover (safe areas), apple-mobile-web-app-capable + status-bar-style + title, mobile-web-app-capable, format-detection=telephone=no.
+- Full Apple Beta Readiness matrix (Ready/Needs Work/Not Yet) at **/app/memory/APPLE_BETA_READINESS.md**. Verdict: no core re-architecture needed. P0 gaps for beta: native token auth (ASWebAuthenticationSession + Keychain; backend already accepts Bearer), App Privacy label + camera/photo permission strings. P1: APNs push (fan-out from central notify_user + device-registration endpoint), Universal Links (apple-app-site-association). P2: notification preference center, accessibility pass. Role-scoped mobile nav already in place.
+
+## Next Tasks
+- Group 5 follow-through (when ready): device-token registration endpoint + APNs fan-out, Universal Links file, notification preference center, accessibility/touch-target pass.
+- P2: External Google Calendar 2-way sync, reporting enhancements, server.py router refactor (~3,680 lines).
 - GROUP 4: Resources Calendar button → /events; fix event image not showing on published events; Edit/Update published events (all fields).
 - GROUP 5: Mobile/iOS readiness (responsive/touch pass, role-scoped mobile nav, deep-link + push-ready architecture, Apple Beta Readiness matrix).
 - GROUP 6: E2E workflow testing; then P2 (Google Calendar sync, server.py router refactor, recognition/certificates, reporting enhancements).

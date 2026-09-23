@@ -151,6 +151,7 @@ export default function Apply() {
             <div className="space-y-2 pt-2">
               <Consent name="consent" checked={f.consent} onChange={on} label="I consent to receive email communications from AAWTA." />
               <Consent name="certify" checked={f.certify} onChange={on} label="I certify that the information provided is accurate, and I electronically acknowledge this submission." />
+              <p className="text-xs text-slate-500 pt-1" data-testid="apply-legal-ack">By submitting, you acknowledge AAWTA's <a href="https://aawta.org/terms-and-conditions" target="_blank" rel="noreferrer" className="text-brand-magenta underline underline-offset-2">Terms &amp; Conditions</a> and <a href="https://aawta.org/privacy-policy" target="_blank" rel="noreferrer" className="text-brand-magenta underline underline-offset-2">Privacy Policy</a>.</p>
             </div>
           </Section>
 
