@@ -7,6 +7,7 @@ import { PageTitle, StatusBadge, Loading } from "@/components/shared";
 import { Button } from "@/components/ui/button";
 import { APP_STATUSES } from "@/lib/constants";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { CommsPanel } from "@/components/CommsPanel";
 
 const LEADERSHIP = ["super_admin", "director"];
 
@@ -37,7 +38,7 @@ export default function ApplicationDetail() {
       <div className="grid lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 space-y-5">
           <Tabs defaultValue="answers">
-            <TabsList><TabsTrigger value="answers">Answers</TabsTrigger><TabsTrigger value="files">Files ({fileKeys.length})</TabsTrigger><TabsTrigger value="notes">Notes ({a.notes?.length || 0})</TabsTrigger><TabsTrigger value="timeline">Timeline</TabsTrigger></TabsList>
+            <TabsList><TabsTrigger value="answers">Answers</TabsTrigger><TabsTrigger value="files">Files ({fileKeys.length})</TabsTrigger><TabsTrigger value="notes">Notes ({a.notes?.length || 0})</TabsTrigger><TabsTrigger value="comms" data-testid="tab-comms">Communications</TabsTrigger><TabsTrigger value="timeline">Timeline</TabsTrigger></TabsList>
             <TabsContent value="answers">
               <div className="bg-white border border-slate-200 rounded-xl p-5 grid sm:grid-cols-2 gap-x-6 gap-y-3">
                 {Object.entries(d).filter(([, v]) => v && typeof v !== "object").map(([k, v]) => (
@@ -72,6 +73,9 @@ export default function ApplicationDetail() {
                   ))}
                 </div>
               </div>
+            </TabsContent>
+            <TabsContent value="comms">
+              <CommsPanel subjectType="application" subjectId={id} />
             </TabsContent>
             <TabsContent value="timeline">
               <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-3">

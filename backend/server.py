@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, Depends, HTTPException, Request, Response, UploadFile, File, Form, Header, Query
+from fastapi import FastAPI, APIRouter, Depends, HTTPException, Request, Response, UploadFile, File, Form, Header, Query, Body
 from fastapi.responses import StreamingResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -1072,6 +1072,293 @@ async def list_ann_requests(user=Depends(get_current_user)):
     if user["role"] in STAFF_ROLES:
         return await db.announcement_requests.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
     return await db.announcement_requests.find({"requested_by_id": user["user_id"]}, {"_id": 0}).sort("created_at", -1).to_list(500)
+
+# ---------------- notification templates & communications ----------------
+TEMPLATE_PLACEHOLDERS = ["first_name", "name", "ref", "role", "org_email", "org_phone", "admin_name", "portal_link", "event_name", "event_date"]
+
+DEFAULT_TEMPLATES = [
+    {"key": "application_received", "name": "Application Received", "category": "Applications",
+     "subject": "We received your CEC application ({{ref}})", "mode": "automatic", "trigger": "application_submitted",
+     "enabled": True, "include_button": False, "button_label": "",
+     "body": "Hi {{first_name}},\nThank you for applying to the AAWTA Community Engagement Committee as a {{role}}. Your reference number is {{ref}}.\nOur team will review your application and follow up with next steps. If you have questions, contact us at {{org_email}}.\nWarm regards,\nThe AAWTA CEC Team"},
+    {"key": "application_approved", "name": "Application Approved", "category": "Applications",
+     "subject": "Congratulations — your CEC application is approved ({{ref}})", "mode": "automatic", "trigger": "application_approved",
+     "enabled": True, "include_button": True, "button_label": "Access CEC Connect",
+     "body": "Hi {{first_name}},\nCongratulations! Your application to serve as a CEC {{role}} has been approved.\nThe next step is to activate your CEC Connect account and complete your onboarding profile.\nWe're excited to have you with us.\nThe AAWTA CEC Team"},
+    {"key": "onboarding_profile", "name": "Complete Your Onboarding Profile", "category": "Onboarding",
+     "subject": "Complete your CEC Connect onboarding profile", "mode": "automatic", "trigger": "member_converted",
+     "enabled": True, "include_button": True, "button_label": "Complete My Profile",
+     "body": "Hi {{first_name}},\nWelcome aboard! To finish setting up your CEC {{role}} account, please complete your onboarding profile and review your assigned documents.\nSign in with the Google account tied to this email — no password needed.\nThe AAWTA CEC Team"},
+    {"key": "missing_requirements", "name": "Missing Requirements", "category": "Onboarding",
+     "subject": "Action needed: complete your CEC onboarding requirements", "mode": "manual", "trigger": "manual",
+     "enabled": True, "include_button": True, "button_label": "Complete Requirements",
+     "body": "Hi {{first_name}},\nWe noticed a few onboarding items still need your attention. Please sign in to review and complete your outstanding requirements.\nIf you need help, contact us at {{org_email}}.\nThe AAWTA CEC Team"},
+    {"key": "onboarding_reminder", "name": "Onboarding Reminder", "category": "Onboarding",
+     "subject": "Reminder: finish your CEC onboarding", "mode": "automatic", "trigger": "onboarding_reminder",
+     "enabled": True, "include_button": True, "button_label": "Continue Onboarding",
+     "body": "Hi {{first_name}},\nThis is a friendly reminder to complete your CEC {{role}} onboarding. Finishing these steps unlocks your full access and helps us support your work.\nThe AAWTA CEC Team"},
+    {"key": "fully_onboarded_welcome", "name": "Fully Onboarded / Welcome", "category": "Onboarding",
+     "subject": "You're fully onboarded — welcome to the CEC!", "mode": "automatic", "trigger": "onboarding_complete",
+     "enabled": True, "include_button": True, "button_label": "Go to My Dashboard",
+     "body": "Hi {{first_name}},\nCongratulations on completing your onboarding! You're now a fully active CEC {{role}}.\nExplore your dashboard, set your goals, and jump into upcoming events. We're thrilled to have you.\nThe AAWTA CEC Team"},
+    {"key": "volunteer_event_assignment", "name": "Volunteer Event Assignment", "category": "Events",
+     "subject": "You've been assigned to {{event_name}}", "mode": "manual", "trigger": "event_assignment",
+     "enabled": True, "include_button": True, "button_label": "View Event",
+     "body": "Hi {{first_name}},\nYou've been assigned to support {{event_name}} on {{event_date}}. Please review the event details and check-in instructions in your portal.\nThank you for volunteering!\nThe AAWTA CEC Team"},
+    {"key": "ambassador_update", "name": "Ambassador Update", "category": "General",
+     "subject": "An update from the AAWTA CEC", "mode": "manual", "trigger": "manual",
+     "enabled": True, "include_button": False, "button_label": "",
+     "body": "Hi {{first_name}},\nWe wanted to share an important update with you.\n[Add your update here.]\nThank you for all you do as a CEC Ambassador.\nThe AAWTA CEC Team"},
+    {"key": "general_communication", "name": "General Communication", "category": "General",
+     "subject": "A message from the AAWTA CEC", "mode": "manual", "trigger": "manual",
+     "enabled": True, "include_button": False, "button_label": "",
+     "body": "Hi {{first_name}},\n[Write your message here.]\nThank you,\n{{admin_name}}\nAAWTA CEC"},
+]
+
+
+def _subst(text, ctx):
+    return re.sub(r"{{\s*(\w+)\s*}}", lambda m: str(ctx.get(m.group(1), m.group(0))), text or "")
+
+
+def _body_to_html(body_text, ctx=None, include_button=False, button_label=None):
+    text = _subst(body_text, ctx or {})
+    inner = "".join(ep(hesc(line)) for line in text.split("\n") if line.strip())
+    if include_button:
+        link = (ctx or {}).get("portal_link") or (PUBLIC_BASE_URL + "/portal")
+        inner += ep(f'<a href="{hesc(link)}" style="background:#D6189B;color:#fff;padding:10px 18px;'
+                    f'border-radius:999px;text-decoration:none;font-weight:bold">{hesc(button_label or "Open CEC Connect")}</a>')
+    return inner
+
+
+async def ensure_templates():
+    for t in DEFAULT_TEMPLATES:
+        await db.notification_templates.update_one(
+            {"key": t["key"]},
+            {"$setOnInsert": {**t, "is_system": True, "placeholders": TEMPLATE_PLACEHOLDERS,
+                              "created_at": now_iso(), "updated_at": now_iso(), "updated_by": None}},
+            upsert=True)
+
+
+async def _comm_ctx(subject_type, subject_id, actor):
+    settings = await get_settings_doc()
+    base = PUBLIC_BASE_URL
+    ctx = {"org_email": settings.get("email") or "", "org_phone": settings.get("phone") or "",
+           "admin_name": (actor or {}).get("name") or "", "portal_link": base + "/portal",
+           "first_name": "there", "name": "", "ref": "", "role": "", "event_name": "", "event_date": ""}
+    target_email = None
+    if subject_type == "application":
+        a = await db.applications.find_one({"id": subject_id}, {"_id": 0})
+        if a:
+            ctx["name"] = a.get("name") or ""
+            ctx["first_name"] = (a.get("data", {}).get("first_name") or (a.get("name") or "there").split(" ")[0]) or "there"
+            ctx["ref"] = a.get("ref") or ""
+            ctx["role"] = {"ambassador": "Ambassador", "volunteer": "Volunteer"}.get(a.get("type"), "")
+            target_email = a.get("email")
+    elif subject_type == "member":
+        m = await db.members.find_one({"id": subject_id}, {"_id": 0})
+        if m:
+            ctx["name"] = m.get("name") or ""
+            ctx["first_name"] = (m.get("name") or "there").split(" ")[0] or "there"
+            ctx["role"] = (m.get("role") or "").replace("_", " ").title()
+            target_email = m.get("email")
+    else:  # generic sample for template editor
+        ctx.update({"name": "Jordan Smith", "first_name": "Jordan", "ref": "AMB-2026-0001",
+                    "role": "Ambassador", "event_name": "CEC Community Career Fair", "event_date": "2026-10-15"})
+    return ctx, target_email
+
+
+async def _resolve_target_user_id(subject_type, subject_id):
+    if subject_type == "member":
+        m = await db.members.find_one({"id": subject_id}, {"_id": 0, "user_id": 1})
+        return (m or {}).get("user_id")
+    if subject_type == "application":
+        a = await db.applications.find_one({"id": subject_id}, {"_id": 0, "member_id": 1})
+        if a and a.get("member_id"):
+            m = await db.members.find_one({"id": a["member_id"]}, {"_id": 0, "user_id": 1})
+            return (m or {}).get("user_id")
+    return None
+
+
+async def send_template_email(key, subject_type, subject_id, actor=None, extra_ctx=None, force=False):
+    """Fire a template-driven email + log a communication record. Respects enabled/mode unless force."""
+    await ensure_templates()
+    tpl = await db.notification_templates.find_one({"key": key}, {"_id": 0})
+    if not tpl or (not tpl.get("enabled") and not force):
+        return None
+    if not force and tpl.get("mode") != "automatic":
+        return None
+    ctx, target_email = await _comm_ctx(subject_type, subject_id, actor)
+    if extra_ctx:
+        ctx.update({k: v for k, v in extra_ctx.items() if v is not None})
+    if not target_email:
+        return None
+    subject = _subst(tpl.get("subject", ""), ctx)
+    inner = _body_to_html(tpl.get("body", ""), ctx, tpl.get("include_button"), tpl.get("button_label"))
+    log = await log_and_send(to=target_email, subject=subject, inner_html=inner, title=subject,
+                             template=key, related_type=subject_type, related_id=subject_id)
+    rec = {"id": new_id("comm"), "subject_type": subject_type, "subject_id": subject_id, "channel": "email",
+           "template_key": key, "template_name": tpl.get("name"), "subject": subject, "body": _subst(tpl.get("body", ""), ctx),
+           "to_email": target_email, "sent_by_id": (actor or {}).get("user_id"), "sent_by_name": (actor or {}).get("name") or "System (automatic)",
+           "automatic": actor is None, "status": log["status"],
+           "email_log_id": log["id"], "provider_id": log.get("provider_id"), "created_at": now_iso()}
+    await db.communications.insert_one(dict(rec))
+    return log
+
+
+class TemplateUpdate(BaseModel):
+    name: Optional[str] = None
+    subject: Optional[str] = None
+    body: Optional[str] = None
+    mode: Optional[str] = None
+    enabled: Optional[bool] = None
+    include_button: Optional[bool] = None
+    button_label: Optional[str] = None
+    category: Optional[str] = None
+
+
+class TestSendIn(BaseModel):
+    to: EmailStr
+
+
+@api_router.get("/notification-templates")
+async def list_templates(user=Depends(require_roles(*STAFF_ROLES))):
+    await ensure_templates()
+    tpls = await db.notification_templates.find({}, {"_id": 0}).sort("category", 1).to_list(200)
+    return {"templates": tpls, "placeholders": TEMPLATE_PLACEHOLDERS}
+
+
+@api_router.get("/notification-templates/{key}")
+async def get_template(key: str, user=Depends(require_roles(*STAFF_ROLES))):
+    await ensure_templates()
+    t = await db.notification_templates.find_one({"key": key}, {"_id": 0})
+    if not t:
+        raise HTTPException(404, "Template not found")
+    return t
+
+
+@api_router.put("/notification-templates/{key}")
+async def update_template(key: str, payload: TemplateUpdate, user=Depends(require_roles(*LEADERSHIP_ROLES))):
+    await ensure_templates()
+    upd = {k: v for k, v in payload.model_dump().items() if v is not None}
+    if "mode" in upd and upd["mode"] not in ("automatic", "manual"):
+        raise HTTPException(400, "Invalid mode")
+    upd["updated_at"] = now_iso()
+    upd["updated_by"] = user["name"]
+    r = await db.notification_templates.update_one({"key": key}, {"$set": upd})
+    if not r.matched_count:
+        raise HTTPException(404, "Template not found")
+    await log_audit(user, "template_updated", "notification_template", key, {"fields": list(upd.keys())})
+    return await db.notification_templates.find_one({"key": key}, {"_id": 0})
+
+
+@api_router.post("/notification-templates/{key}/preview")
+async def preview_template(key: str, user=Depends(require_roles(*STAFF_ROLES))):
+    await ensure_templates()
+    t = await db.notification_templates.find_one({"key": key}, {"_id": 0})
+    if not t:
+        raise HTTPException(404, "Template not found")
+    ctx, _ = await _comm_ctx("generic", None, user)
+    subject = _subst(t.get("subject", ""), ctx)
+    inner = _body_to_html(t.get("body", ""), ctx, t.get("include_button"), t.get("button_label"))
+    return {"subject": subject, "html": _wrap(subject, inner)}
+
+
+@api_router.post("/notification-templates/{key}/test-send")
+async def test_send_template(key: str, payload: TestSendIn, user=Depends(require_roles(*STAFF_ROLES))):
+    await ensure_templates()
+    t = await db.notification_templates.find_one({"key": key}, {"_id": 0})
+    if not t:
+        raise HTTPException(404, "Template not found")
+    ctx, _ = await _comm_ctx("generic", None, user)
+    subject = "[TEST] " + _subst(t.get("subject", ""), ctx)
+    inner = _body_to_html(t.get("body", ""), ctx, t.get("include_button"), t.get("button_label"))
+    log = await log_and_send(to=str(payload.to), subject=subject, inner_html=inner, title=subject,
+                             template=f"test:{key}", related_type="notification_template", related_id=key)
+    await log_audit(user, "template_test_sent", "notification_template", key, {"to": str(payload.to), "status": log["status"]})
+    return {"status": log["status"], "error": log.get("error")}
+
+
+class CommPreviewIn(BaseModel):
+    subject_type: str
+    subject_id: str
+    template_key: str
+
+
+class CommSendIn(BaseModel):
+    subject_type: str
+    subject_id: str
+    template_key: Optional[str] = None
+    subject: str
+    body: str
+    channel: str = "email"
+    include_button: bool = False
+    button_label: Optional[str] = None
+
+
+@api_router.post("/comms/preview")
+async def comm_preview(payload: CommPreviewIn, user=Depends(require_roles(*STAFF_ROLES))):
+    if payload.subject_type not in ("application", "member"):
+        raise HTTPException(400, "Invalid subject_type")
+    await ensure_templates()
+    t = await db.notification_templates.find_one({"key": payload.template_key}, {"_id": 0})
+    if not t:
+        raise HTTPException(404, "Template not found")
+    ctx, _ = await _comm_ctx(payload.subject_type, payload.subject_id, user)
+    return {"subject": _subst(t.get("subject", ""), ctx), "body": _subst(t.get("body", ""), ctx),
+            "include_button": t.get("include_button", False), "button_label": t.get("button_label") or ""}
+
+
+@api_router.post("/comms/send")
+async def comm_send(payload: CommSendIn, user=Depends(require_roles(*STAFF_ROLES))):
+    if payload.subject_type not in ("application", "member"):
+        raise HTTPException(400, "Invalid subject_type")
+    if payload.channel not in ("email", "portal", "both"):
+        raise HTTPException(400, "Invalid channel")
+    if not payload.subject.strip() or not payload.body.strip():
+        raise HTTPException(400, "Subject and message are required")
+    ctx, target_email = await _comm_ctx(payload.subject_type, payload.subject_id, user)
+    tpl_name = None
+    if payload.template_key:
+        t = await db.notification_templates.find_one({"key": payload.template_key}, {"_id": 0, "name": 1})
+        tpl_name = (t or {}).get("name")
+    email_log_id = None
+    provider_id = None
+    status = "portal_only"
+    if payload.channel in ("email", "both"):
+        if not target_email:
+            raise HTTPException(400, "No email address on record for this recipient")
+        inner = _body_to_html(payload.body, ctx, payload.include_button, payload.button_label)
+        log = await log_and_send(to=target_email, subject=payload.subject, inner_html=inner, title=payload.subject,
+                                 template=payload.template_key or "custom", related_type=payload.subject_type, related_id=payload.subject_id)
+        email_log_id = log["id"]
+        provider_id = log.get("provider_id")
+        status = log["status"]
+    if payload.channel in ("portal", "both"):
+        uid = await _resolve_target_user_id(payload.subject_type, payload.subject_id)
+        if uid:
+            await notify_user(uid, payload.subject, payload.body[:140], "/portal", "info")
+    rec = {"id": new_id("comm"), "subject_type": payload.subject_type, "subject_id": payload.subject_id, "channel": payload.channel,
+           "template_key": payload.template_key, "template_name": tpl_name, "subject": payload.subject, "body": payload.body,
+           "to_email": target_email, "sent_by_id": user["user_id"], "sent_by_name": user["name"], "automatic": False,
+           "status": status, "email_log_id": email_log_id, "provider_id": provider_id, "created_at": now_iso()}
+    await db.communications.insert_one(dict(rec))
+    await add_timeline(payload.subject_type, payload.subject_id, f"Message sent: {payload.subject}", user)
+    await log_audit(user, "communication_sent", payload.subject_type, payload.subject_id, {"template": payload.template_key, "channel": payload.channel})
+    return clean(rec)
+
+
+@api_router.get("/comms")
+async def list_comms(subject_type: str, subject_id: str, user=Depends(require_roles(*STAFF_ROLES))):
+    recs = await db.communications.find({"subject_type": subject_type, "subject_id": subject_id}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    for r in recs:
+        if r.get("email_log_id"):
+            el = await db.email_log.find_one({"id": r["email_log_id"]}, {"_id": 0, "status": 1, "opened_at": 1, "delivered_at": 1, "error": 1})
+            if el:
+                r["status"] = el.get("status") or r.get("status")
+                r["delivered_at"] = el.get("delivered_at")
+                r["opened_at"] = el.get("opened_at")
+                r["error"] = el.get("error")
+    return recs
 
 # ---------------- registration & email helpers ----------------
 PAYMENT_STATUSES = ["paid", "pending", "complimentary", "refunded", "not_applicable"]

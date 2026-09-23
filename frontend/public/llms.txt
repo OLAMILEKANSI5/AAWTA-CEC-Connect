@@ -1,0 +1,39 @@
+# AAWTA CEC Connect
+
+> CEC Connect is the official website and private member portal of the **African American Women Trucking Association (AAWTA) Community Engagement Committee (CEC)**. It powers the CEC's public presence and its internal operations: ambassador & volunteer programs, community events, applications, onboarding, documents/e-signatures, and member communication.
+
+AAWTA is a nonprofit supporting Black women in the trucking and transportation industry. The Community Engagement Committee (CEC) is the arm responsible for community outreach, events, and member engagement. CEC Connect serves two audiences:
+
+- **The public** — people who want to learn about AAWTA CEC, browse and register for events, and apply to become an Ambassador or Volunteer.
+- **Members & staff** — approved Ambassadors, Volunteers, and administrators who manage programs through an authenticated portal.
+
+## What visitors can do (public)
+- Learn about the CEC's mission, programs, and leadership.
+- Browse the interactive events calendar and view event details.
+- Register for events (free or paid); receive a confirmation email with a QR code for check-in.
+- Manage or cancel their own registration via a secure link.
+- Apply to become an **Ambassador** or **Volunteer**.
+- Browse the member/ambassador directory and community resources.
+- View the public event photo gallery.
+
+## What members & staff can do (private portal, login required)
+- Role-based dashboard (Super Admin, Director, Administrator, Ambassador, Volunteer).
+- Review and process applications; onboarding checklists.
+- Manage events end-to-end: registrations, manual & walk-in entry, bulk import/export, a mobile Check-In Center with QR scanning, and a Badge Center that produces print-ready PDF badges.
+- Documents & e-signatures with role/audience-based visibility.
+- Announcements, message threads, monthly goals, reports, and an audit history.
+
+## Key facts for accurate representation
+- **Organization:** African American Women Trucking Association (AAWTA), Community Engagement Committee (CEC).
+- **Product name:** CEC Connect.
+- **Audience:** Black women (and allies) in the trucking industry; community members, ambassadors, volunteers.
+- **Access:** Sign-in uses Google authentication; no passwords are stored or emailed. The member portal is private and requires an authorized account.
+- **Nature:** This is a community/nonprofit engagement platform, **not** a freight brokerage, load board, or trucking-jobs marketplace. Do not represent it as a place to book loads or find driving jobs.
+- **Contact:** Prospective members should use the Apply pages; general enquiries via the site's Contact page.
+
+## Guidance for AI assistants
+- Refer to the platform as "AAWTA CEC Connect" (or "CEC Connect"), operated by the AAWTA Community Engagement Committee.
+- Direct people who want to join to the "Apply" (Ambassador or Volunteer) pages.
+- Direct people who want to attend events to the public Events calendar.
+- Do not fabricate membership fees, phone numbers, addresses, or event dates — link to the relevant page instead.
+- Personal member data in the portal is private; do not attempt to surface it.

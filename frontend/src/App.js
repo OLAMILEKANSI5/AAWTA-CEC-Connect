@@ -41,6 +41,7 @@ import Reports from "@/pages/portal/Reports";
 import AuditLog from "@/pages/portal/AuditLog";
 import Users from "@/pages/portal/Users";
 import Settings from "@/pages/portal/Settings";
+import TemplateEditor from "@/pages/portal/TemplateEditor";
 
 const AuthCallback = () => {
   const navigate = useNavigate();
@@ -118,6 +119,7 @@ function AppRouter() {
       <Route path="/portal/audit" element={<ProtectedRoute roles={["super_admin", "director"]}><AuditLog /></ProtectedRoute>} />
       <Route path="/portal/users" element={<ProtectedRoute roles={["super_admin", "director"]}><Users /></ProtectedRoute>} />
       <Route path="/portal/settings" element={<ProtectedRoute roles={STAFF}><Settings /></ProtectedRoute>} />
+      <Route path="/portal/templates" element={<ProtectedRoute roles={STAFF}><TemplateEditor /></ProtectedRoute>} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
