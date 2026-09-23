@@ -148,8 +148,19 @@ Part of a large Ambassador/Volunteer lifecycle overhaul (build order: Messaging 
 - Verified: iteration_15 — 12/12 backend pytest + full UI. Fixed fully_onboarded race via atomic find_one_and_update. Reusable suite /app/backend/tests/test_group2_onboarding.py.
 - Known infra: Emergent email provider 429-throttles under bursty sends; log_and_send retries 3x (~4.5s) and still records status (failed if all fail) — not a product bug.
 
+## Implemented (2026-06, Event & Post-Event fixes — pre-Group-3)
+### Fix: published event images
+- Root cause: `_is_public_file` didn't authorize an event's `image_file_id`, so `/public/files/{id}` 404'd → hero images vanished once published. Fixed to serve images for events that are `published` (or legacy `public`) and not archived. Verified: image 404 before publish, 200 after Publish alone.
+### Edit Event
+- PUT /api/events/{id} (staff or owner; 403 otherwise, 404 missing): updates the existing record in place (exclude_unset), normalizes virtual_link, syncs gallery_photos event_name on rename. Frontend: 'Edit' button (edit-event-{id}) on staff event cards (both active & awaiting) reuses the create dialog PREFILLED; Save = PUT (no duplicate). Title 'Edit Event' / button 'Save Changes'.
+### Post-Event Report → Gallery approval workflow
+- New `gallery_photos` collection connects report photos to the public gallery (no double upload). On report submit, `_add_gallery_photos` creates a record per photo: staff submitter → approved; ambassador/member → pending. `_backfill_gallery` (startup) migrates existing report photos (approved if event.public else pending).
+- Endpoints: GET /api/public/gallery (approved only, w/ event_name+caption+state+date), GET /api/gallery/photos?status=&event_id= (staff, +counts), PUT /api/gallery/photos/{id}/status {pending|approved|rejected} (staff; invalid→400). `_is_public_file` serves approved gallery photos; reject → removed from public + 404.
+- Frontend: staff-only 'Photo Gallery' subtab on /portal/events → GalleryReview.jsx (pending/approved/rejected tabs w/ counts, thumbnails, Approve/Reject/Reset). Public Gallery unchanged (reads /public/gallery).
+- Verified: iteration_16 — 14/14 backend pytest + full UI (desktop + iPhone 390px). Suite /app/backend/tests/test_group3_events_gallery.py. Fixed post-review: public-image predicate aligned to `published`; Edit dialog a11y (DialogDescription).
+
 ## Next Tasks (this overhaul)
-- GROUP 3: Volunteer service hours (clock in/out, manual submit, admin approve/edit/reject, totals/filters/CSV, milestones 20/50/100+, intern-reusable) + Check-In integration; Check-In Volunteer Assignment UI (checkin-assignees endpoint exists).
+- GROUP 3: Volunteer service hours (clock in/out, manual submit, admin approve/edit/reject, totals/filters/CSV, milestones 20/50/100+ with auto downloadable certificate PDFs [user-approved, must not delay core], intern-reusable) + Check-In integration; Check-In Volunteer Assignment UI (checkin-assignees endpoint exists).
 - GROUP 4: Resources Calendar button → /events; fix event image not showing on published events; Edit/Update published events (all fields).
 - GROUP 5: Mobile/iOS readiness (responsive/touch pass, role-scoped mobile nav, deep-link + push-ready architecture, Apple Beta Readiness matrix).
 - GROUP 6: E2E workflow testing; then P2 (Google Calendar sync, server.py router refactor, recognition/certificates, reporting enhancements).

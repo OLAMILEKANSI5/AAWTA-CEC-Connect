@@ -4,7 +4,7 @@ import { Calendar, Plus, MapPin, ExternalLink, CalendarPlus, Download, Camera, I
 import { api, API, useAuth } from "@/auth";
 import { PageTitle, Loading, EmptyState, StatusBadge } from "@/components/shared";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
 import { Field, SelectField } from "@/components/FormFields";
 import { UploadButton } from "@/components/PortalUpload";
 import { EventManage } from "@/components/EventManage";
@@ -83,7 +83,7 @@ export default function Events() {
           <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (!o) { setF({}); setEditingId(null); } }}>
             <DialogTrigger asChild><Button data-testid="new-event-btn" onClick={() => { setEditingId(null); setF({}); }} className="rounded-full bg-brand-magenta hover:bg-brand-pink"><Plus size={16} className="mr-1" /> {isStaff ? "Add Event" : "Submit Event"}</Button></DialogTrigger>
             <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
-              <DialogHeader><DialogTitle>{editingId ? "Edit Event" : (isStaff ? "Add Event" : "Submit Event Idea")}</DialogTitle></DialogHeader>
+              <DialogHeader><DialogTitle>{editingId ? "Edit Event" : (isStaff ? "Add Event" : "Submit Event Idea")}</DialogTitle><DialogDescription>{editingId ? "Update the details below — changes save to the existing event." : "Fill in the event details below."}</DialogDescription></DialogHeader>
               <div className="space-y-4">
                 <Field label="Event name" name="name" value={f.name} onChange={on} required />
                 <div className="grid grid-cols-2 gap-4">

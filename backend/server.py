@@ -869,7 +869,7 @@ async def _is_public_file(file_id: str) -> bool:
         return True
     if await db.announcements.find_one({"image_file_id": file_id, "public": True, "published": True}, {"_id": 0}):
         return True
-    if await db.events.find_one({"image_file_id": file_id, "public": True}, {"_id": 0}):
+    if await db.events.find_one({"image_file_id": file_id, "archived": {"$ne": True}, "$or": [{"published": True}, {"public": True}]}, {"_id": 0}):
         return True
     if await db.gallery_photos.find_one({"file_id": file_id, "status": "approved"}, {"_id": 0}):
         return True

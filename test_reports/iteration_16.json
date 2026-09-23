@@ -1,0 +1,34 @@
+{
+  "summary": "Group 3 (Edit Event + Post-Event Report -> Gallery approval workflow + Public event image serving) verified. Backend pytest: 14/14 pass (test_group3_events_gallery.py). Covered: (1) Public event image serves via /public/files/{id} when event has public:true (200) and 404 when not public. (2) PUT /api/events/{id} staff edit-in-place returns same id + persists via GET; missing -> 404; owner (ambassador) can edit own; non-owner non-staff -> 403; renaming event auto-updates event_name on that event's gallery_photos. (3) Staff post-event report -> gallery_photos auto status='approved' -> appears in /public/gallery with correct event_name+caption + /public/files/{photo}=200. (4) Ambassador (seeded tok_amb_g3test session, role=ambassador) posting report on own event -> gallery_photos status='pending', NOT in /public/gallery, /public/files/{photo}=404, appears in staff GET /gallery/photos?status=pending with counts; PUT /gallery/photos/{id}/status approve -> now in public gallery + file 200; other pending photo remains 404. Confirmed multiple photos per report (2) each individually reviewable and tied to the correct event_id. (5) Reject/re-approve cycle: PUT status='rejected' pulls from public gallery + /public/files -> 404; re-approve restores 200. (6) Invalid status -> 400; non-staff PUT/GET on /gallery/photos -> 403. Regression: /notification-templates includes application_received/application_approved/onboarding_profile/fully_onboarded_welcome; /onboarding/pipeline shape intact. Frontend UI (desktop + iPhone 390px): /portal/events has staff-only 'Photo Gallery' subtab (subtab-gallery). GalleryReview renders with 3 tabs (gallery-tab-pending/approved/rejected) with correct counts (2/13/1 during run), 13 thumbnails, Approve/Reject/Reset buttons wired to correct testids. Edit dialog opens with title 'Edit Event' and Save button labeled 'Save Changes'; all fields prefilled (name, event_type, date, start/end time, timezone, venue_address, ticket_categories comma-joined 'General Admission', city, capacity, description, category, format, state); 'Current image attached' shown in image slot. No horizontal overflow on mobile.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Edit Event dialog", "issues": ["Console warning: Missing `Description` or `aria-describedby` on DialogContent (a11y). Non-blocking."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_group3_events_gallery.py",
+    "/app/test_reports/pytest/group3_it16.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Semantic mismatch: _public_evq() filters events by {status:Approved/Scheduled, published:True, archived:False}, but _is_public_file() for events checks {image_file_id, public:True}. These are DIFFERENT fields — `public` is a user-set flag on EventIn (default False), while `published` is toggled by /events/{id}/publish. So a staff can /publish an event with image_file_id, see it in /public/events, yet the hero image will still 404 from /public/files unless the creator also ticked `public:true` at creation. Recommend aligning _is_public_file event check to _public_evq (status Approved/Scheduled + published True + archived != True) OR have /events/{id}/publish also set public:True. Currently only tests that set public:true in the create payload get the image to serve.",
+    "server.py now 3357 lines — grew again with EventUpdate + gallery endpoints. Split events/gallery into their own modules soon.",
+    "_backfill_gallery runs on every startup and inserts N photos serially; idempotent per (file_id, event_id) but O(events*reports*photos) unbatched — fine at current data volume, but consider one aggregation pipeline or a flag on the report doc to skip already-backfilled reports.",
+    "Non-owner/non-staff PUT /events/{id} returns 403 correctly, but there is no state guard: staff can edit events that are already 'Completed' or 'Declined' with no audit-visible warning. Fine for correction workflow, but consider preventing edits to Declined events.",
+    "_add_gallery_photos: default_status logic uses submitter_role in STAFF_ROLES — but during _backfill_gallery submitter_role is passed as None so the default_status fallback (approved if ev.public else pending) drives the decision. Historical staff-submitted reports on non-public events get backfilled as 'pending' which may need a one-time script to auto-approve.",
+    "GalleryReview.jsx uses /files/{id}/download for thumbnails (authenticated route). That is fine for staff review, but means images won't render if session cookie is missing. Consider /public/files fallback when the photo is already approved."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_group3_events_gallery.py"
+  ],
+  "success_rate": {"backend": "100% (14/14)", "frontend": "100% on tested flows"},
+  "test_credentials": "Authorization: Bearer tok_admtest (super_admin); Authorization: Bearer tok_amb_g3test (ambassador, seeded by test fixture). Portal UI cookie session_token=tok_admtest + localStorage cec_has_session=1.",
+  "seed_data_creation": "Ran /app/backend/tests/seed_badge.py. Test fixture seeds user_g3amb (ambassador, g3amb@example.com) + session tok_amb_g3test. Test run created ~13 TEST_G3_* events + ~15 gallery_photos (mix of approved/pending/rejected) using 1x1 PNGs. Idempotent-safe (unique file/event pairs).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Reusable pytest at /app/backend/tests/test_group3_events_gallery.py — 14 tests, ~14s. Ambassador fixture seeds tok_amb_g3test directly in mongo (no OAuth in preview). Gallery testids: subtab-gallery, gallery-review, gallery-tab-{pending|approved|rejected}, gallery-photo-{id}, approve-photo-{id}, reject-photo-{id}, reset-photo-{id}. Edit event testid: edit-event-{id}; dialog fields use data-testid=field-{fieldName}; save button data-testid=save-event-btn (label toggles 'Save Changes' vs 'Add'). Note: /public/files/{event_image_file_id} only serves when the event was created with public:true — this may need a code-side change (see critical_code_review_comments #1) if UX expects publishing alone to expose the hero image.",
+  "rca of the issue": "Not a live regression, but a potential future bug: when a staff edits an event to add image_file_id AND toggles publish, the /public/events listing shows the event, but the hero image /public/files/{fid} returns 404 unless public:true is set. Two-way fix options: (a) unify _is_public_file event predicate with _public_evq (status Approved/Scheduled + published + not archived), or (b) have publish_event set public:True."
+}
