@@ -138,8 +138,17 @@ Part of a large Ambassador/Volunteer lifecycle overhaul (build order: Messaging 
 - Frontend `CommsPanel.jsx` reused in ApplicationDetail + MemberDetail 'Communications' tab: Send Message dialog (pick template auto-fills subject/body, edit, choose channel, optional portal button), history list w/ status/sender/template/date.
 - Verified: iteration_14 — 21/21 backend pytest + full UI flows pass. Reusable suite at /app/backend/tests/test_group1_comms_templates.py. Fixed non-blocking a11y (added DialogDescription to Send Message / template Preview + Edit dialogs).
 
+## Implemented (2026-06, Group 2 — Approval → Onboarding Automation + Live Onboarding Dashboard)
+### Approve & Onboard + automation
+- POST /api/applications/{id}/approve-onboard (leadership): sets status Approved (+decision_history), fires 'application_approved' template (recorded on application comms w/ acting admin), converts to member via shared `_do_convert` (approved_at, onboarding_stage=profile_incomplete, fully_onboarded_notified=False), assigns auto-onboarding docs, fires 'onboarding_profile' invite (recorded on member comms). 400 on repeat / inquiry type. NEVER marks fully onboarded on approval.
+- Trigger wiring (all via Group 1 templates + recorded in communications): submit → application_received (auto); PUT /applications/{id}/status=Approved → application_approved (auto); all onboarding steps done in PUT /members/{id}/onboarding → fully_onboarded_welcome (one-time, atomic find_one_and_update guard, sets stage=fully_onboarded). _send_welcome now uses onboarding_profile template (force=True).
+### Live Onboarding Dashboard
+- GET /api/onboarding/pipeline?role=&stage= → {entries, counts, stage_order, stage_labels}. Stages: applied/under_review/approved (applications) → profile_incomplete/docs_needed/thirty_day/fully_onboarded (members). Each entry: name, role, stage, outstanding[], approved_at, days_in_stage, progress_pct, stalled (per-stage STALL_DAYS threshold), link. `_member_onboarding_state` derives stage from profile steps + unsigned assigned/auto docs + checklist completion. Stage persisted lazily on read.
+- Frontend /portal/onboarding-board (OnboardingDashboard.jsx, STAFF nav 'Onboarding Board'): 7 funnel count cards (click to filter), role + stage filters, table w/ stage badge, outstanding list, approved date, days-in-stage (stalled rows highlighted + warning icon), 30-day progress bar, open-profile, and a Send-reminder dialog (reuses /comms/preview + /comms/send). ApplicationDetail has 'Approve & Onboard' button.
+- Verified: iteration_15 — 12/12 backend pytest + full UI. Fixed fully_onboarded race via atomic find_one_and_update. Reusable suite /app/backend/tests/test_group2_onboarding.py.
+- Known infra: Emergent email provider 429-throttles under bursty sends; log_and_send retries 3x (~4.5s) and still records status (failed if all fail) — not a product bug.
+
 ## Next Tasks (this overhaul)
-- GROUP 2: Approve → auto approval email + onboarding invite (wire send_template_email to application_approved/member_converted triggers) + Live Onboarding Dashboard (Applied→Under Review→Approved→Profile Incomplete→Docs Needed→30-Day→Fully Onboarded).
 - GROUP 3: Volunteer service hours (clock in/out, manual submit, admin approve/edit/reject, totals/filters/CSV, milestones 20/50/100+, intern-reusable) + Check-In integration; Check-In Volunteer Assignment UI (checkin-assignees endpoint exists).
 - GROUP 4: Resources Calendar button → /events; fix event image not showing on published events; Edit/Update published events (all fields).
 - GROUP 5: Mobile/iOS readiness (responsive/touch pass, role-scoped mobile nav, deep-link + push-ready architecture, Apple Beta Readiness matrix).

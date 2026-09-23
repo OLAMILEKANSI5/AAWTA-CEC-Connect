@@ -1,0 +1,27 @@
+{
+  "summary": "Group 2 (Approve & Onboard + Onboarding Dashboard + template automations) fully verified. 12/12 pytest cases pass, covering: application_received auto-fire on submit, application_approved auto-fire on PUT /applications/{id}/status=Approved, POST /applications/{id}/approve-onboard happy path (member created at profile_incomplete with approved_at, fully_onboarded_notified=False, application flipped to Converted to Member with decision_history Approved entry, application_approved comm recorded with acting admin as sender, onboarding_profile comm recorded on member), 400 on second call, 400 for inquiry type, /onboarding/pipeline shape+stage_order+labels+counts+all entry fields, role and stage filters (counts reflect role filter, not stage filter), Declined applications excluded, fully_onboarded_welcome one-time trigger + stage=fully_onboarded + no re-fire on retoggle, and Group-1 regression (9+ templates present incl. all 4 automation keys, /comms/preview + /comms/send happy path). UI: /portal/onboarding-board renders all 7 funnel cards with correct testids, role-filter + stage-filter work, funnel-click filters rows (2 profile_incomplete rows shown, matching Group-2 onboarded members), pipeline-row-<id> and remind-<id> present and remind dialog opens with reminder-template-select / reminder-channel / reminder-send. ApplicationDetail: approve-onboard-btn visible for super_admin on ambassador app, click succeeds and navigates to /portal/members/<new-id> with 'Approved & onboarding started' toast; Communications tab of the (now Converted) application shows both Application Received and Application Approved rows.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_group2_onboarding.py",
+    "/app/test_reports/pytest/group2_it15.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Preview upstream email provider is rate-limiting (429) heavily under bursty send patterns; log_and_send retries 3x with 1.5s/3s backoff (~4.5s/send). Background asyncio.create_task fires-and-forgets — if all 3 retries fail the comm is still recorded with status='failed', so functional correctness is preserved, but automated tests need >=15s of wait for the background comm insert to appear when the provider is throttling. Non-blocking, but consider a shorter per-attempt timeout or an internal test-mode short-circuit.",
+    "server.py now 3256 lines — increasingly monolithic; split into modules (applications, onboarding, notifications, comms, events).",
+    "update_onboarding uses a stale local `m` for the `not m.get('fully_onboarded_notified')` guard — safe today because the same PUT $sets the flag before scheduling the task, but two concurrent PUTs that both flip the last remaining step would each pass the guard (race). Consider a findOneAndUpdate({fully_onboarded_notified: {$ne: True}}) atomic swap before firing the task.",
+    "In _do_convert + approve_and_onboard, member is initialized with onboarding_stage='profile_incomplete' but there is no re-computation until GET /onboarding/pipeline touches _member_onboarding_state — that is where the stage gets normalized; direct GET /members/{id} could show a stale onboarding_stage between events. Not currently a bug because pipeline reads/rewrites it, and the fully_onboarded transition is written directly by update_onboarding.",
+    "Onboarding pipeline endpoint always writes onboarding_stage/onboarding_stage_since on GET when it drifts from computed state — this is a side-effect inside a read endpoint. Fine for now, but consider a background reconciler."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_group2_onboarding.py"
+  ],
+  "success_rate": {"backend": "100% (12/12)", "frontend": "100% on tested flows"},
+  "test_credentials": "Authorization: Bearer tok_admtest (super_admin) for API; cookie session_token=tok_admtest + localStorage cec_has_session=1 for portal.",
+  "seed_data_creation": "Ran /app/backend/tests/seed_badge.py; test file creates its own TEST_ prefixed applications each run (delivered+*@resend.dev). One dangling test application (app_fe4600f945fe) was converted to member mem_c7971484478b via the UI approve-onboard flow.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Reusable Group 2 pytest suite at /app/backend/tests/test_group2_onboarding.py — 12 tests, ~85s runtime, needs generous background-task waits (15-20s) because provider 429s force retries. Onboarding Dashboard testids: onboarding-dashboard, funnel-<stage>, role-filter, stage-filter, pipeline-row-<id>, open-profile-<id>, remind-<id>, reminder-template-select, reminder-subject, reminder-body, reminder-channel, reminder-send. Application detail: approve-onboard-btn, convert-btn, tab-comms.",
+  "rca of the issue": "Only intermittent flakiness observed: background comm inserts (application_received / application_approved / fully_onboarded_welcome) can take ~10-20s when Emergent email integration is 429-throttled, because log_and_send retries 3x with 1.5s/3s backoff before still inserting a status='failed' communications row. Mitigation applied in tests: sleep 15-20s after triggers before asserting comm rows."
+}

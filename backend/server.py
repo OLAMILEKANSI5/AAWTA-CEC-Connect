@@ -712,11 +712,14 @@ async def update_onboarding(member_id: str, payload: Dict[str, Any], user=Depend
     await db.members.update_one({"id": member_id}, {"$set": {"onboarding": onboarding}})
     await add_timeline("member", member_id, f"Onboarding step '{step}' {'completed' if done else 'reopened'}", user)
     # fully-onboarded trigger (only once, and only when every required step is complete)
-    if all(o.get("done") for o in onboarding) and not m.get("fully_onboarded_notified"):
-        await db.members.update_one({"id": member_id}, {"$set": {"fully_onboarded_notified": True, "onboarding_stage": "fully_onboarded", "onboarding_stage_since": now_iso()}})
-        asyncio.create_task(send_template_email("fully_onboarded_welcome", "member", member_id, actor=None))
-        await add_timeline("member", member_id, "Fully onboarded", user)
-        await log_audit(user, "member_fully_onboarded", "member", member_id)
+    if onboarding and all(o.get("done") for o in onboarding):
+        swapped = await db.members.find_one_and_update(
+            {"id": member_id, "fully_onboarded_notified": {"$ne": True}},
+            {"$set": {"fully_onboarded_notified": True, "onboarding_stage": "fully_onboarded", "onboarding_stage_since": now_iso()}})
+        if swapped:
+            asyncio.create_task(send_template_email("fully_onboarded_welcome", "member", member_id, actor=None))
+            await add_timeline("member", member_id, "Fully onboarded", user)
+            await log_audit(user, "member_fully_onboarded", "member", member_id)
     return {"ok": True}
 
 @api_router.put("/members/{member_id}/status")
