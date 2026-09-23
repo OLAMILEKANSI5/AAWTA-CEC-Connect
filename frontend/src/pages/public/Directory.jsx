@@ -50,7 +50,7 @@ export default function Directory() {
               <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6" data-testid="directory-grid">
                 {filtered.map((m) => (
                   <div key={m.id} className="bg-white border border-slate-200 rounded-2xl overflow-hidden hover:shadow-lg transition-shadow">
-                    <div className="h-52 bg-brand-navy/5">{m.photo ? <img src={`${API}/public/files/${m.photo}`} alt={m.name} className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center text-brand-navy/20"><Award size={56} /></div>}</div>
+                    <div className="h-52 bg-brand-navy/5">{m.photo ? <img src={`${API}/public/files/${m.photo}?w=500`} loading="lazy" alt={m.name} className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center text-brand-navy/20"><Award size={56} /></div>}</div>
                     <div className="p-5">
                       <h3 className="font-head font-bold text-lg text-brand-navy">{m.name}</h3>
                       <p className="text-brand-magenta text-sm font-semibold flex items-center gap-1"><MapPin size={13} /> {m.state} · {m.title}</p>

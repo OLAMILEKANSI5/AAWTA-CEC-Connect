@@ -59,7 +59,7 @@ export default function PublicEventDetail() {
   return (
     <PublicLayout>
       <section className="bg-brand-navy-dark text-white">
-        {e.image_file_id && <div className="h-56 w-full relative"><img src={`${API}/public/files/${e.image_file_id}`} alt={e.name} className="w-full h-full object-cover opacity-40" onError={(ev) => { ev.currentTarget.style.display = "none"; }} /></div>}
+        {e.image_file_id && <div className="h-56 w-full relative"><img src={`${API}/public/files/${e.image_file_id}?w=1200`} loading="lazy" alt={e.name} className="w-full h-full object-cover opacity-40" onError={(ev) => { ev.currentTarget.style.display = "none"; }} /></div>}
         <div className="max-w-4xl mx-auto px-4 py-10">
           <button onClick={() => navigate("/events")} className="text-white/70 hover:text-white flex items-center gap-1 text-sm mb-4"><ArrowLeft size={15} /> All events</button>
           <div className="flex flex-wrap gap-2 mb-3">

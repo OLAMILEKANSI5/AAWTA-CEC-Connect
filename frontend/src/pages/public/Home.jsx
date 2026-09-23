@@ -117,7 +117,7 @@ export default function Home() {
           <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-6 mt-10">
             {data.spotlights.map((m) => (
               <div key={m.id} className="bg-white border border-slate-200 rounded-2xl overflow-hidden hover:shadow-lg transition-shadow">
-                <div className="h-44 bg-brand-navy/5">{m.photo ? <img src={`${API}/public/files/${m.photo}`} alt={m.name} className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center text-brand-navy/20"><Award size={48} /></div>}</div>
+                <div className="h-44 bg-brand-navy/5">{m.photo ? <img src={`${API}/public/files/${m.photo}?w=400`} loading="lazy" alt={m.name} className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center text-brand-navy/20"><Award size={48} /></div>}</div>
                 <div className="p-4">
                   <h4 className="font-head font-bold text-brand-navy">{m.name}</h4>
                   <p className="text-xs text-brand-magenta font-semibold">{m.state} State Ambassador</p>

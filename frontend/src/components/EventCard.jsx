@@ -18,7 +18,7 @@ export const EventCard = ({ e, onOpen }) => {
   return (
     <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden hover:shadow-lg transition-shadow flex flex-col" data-testid={`event-card-${e.id}`}>
       <div className="h-36 bg-brand-navy/5 relative">
-        {e.image_file_id ? <img src={`${API}/public/files/${e.image_file_id}`} alt={e.name} className="w-full h-full object-cover" onError={(ev) => { ev.currentTarget.style.display = "none"; }} /> : <div className="w-full h-full flex items-center justify-center text-brand-navy/20"><Calendar size={40} /></div>}
+        {e.image_file_id ? <img src={`${API}/public/files/${e.image_file_id}?w=500`} loading="lazy" alt={e.name} className="w-full h-full object-cover" onError={(ev) => { ev.currentTarget.style.display = "none"; }} /> : <div className="w-full h-full flex items-center justify-center text-brand-navy/20"><Calendar size={40} /></div>}
         <span className={`absolute top-3 left-3 text-[11px] font-semibold px-2 py-0.5 rounded-full ${cat}`}>{e.category || "Event"}</span>
         <span className={`absolute top-3 right-3 text-[11px] font-semibold px-2 py-0.5 rounded-full ${e.is_paid ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"}`}>{e.is_paid ? (e.price ? e.price : "Paid") : "Free"}</span>
       </div>

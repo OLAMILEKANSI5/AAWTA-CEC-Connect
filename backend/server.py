@@ -10,6 +10,7 @@ from typing import List, Optional, Any, Dict
 from datetime import datetime, timezone, timedelta
 
 import httpx
+from PIL import Image
 import storage as storage_mod
 from emailer import send_safe, send_email, _wrap, p as ep
 from urllib.parse import urlencode
@@ -183,11 +184,15 @@ async def create_session(request: Request, response: Response, x_session_id: Opt
             "name": data.get("name") or user["name"],
             "picture": data.get("picture") or user.get("picture"),
             "role": auth_entry["role"],
+            "inactive": False,
         }})
         user = await db.users.find_one({"email": email}, {"_id": 0})
 
-    # link member record if exists
-    await db.members.update_one({"login_email": email}, {"$set": {"user_id": user["user_id"], "linked": True}})
+    # link member record if exists + clear 30-day inactivity soft-lock on re-auth (data preserved)
+    reactivated = await db.members.find_one({"login_email": email, "inactive": True}, {"_id": 0, "id": 1})
+    await db.members.update_one({"login_email": email}, {"$set": {"user_id": user["user_id"], "linked": True, "inactive": False, "inactive_since": None}})
+    if reactivated:
+        await add_timeline("member", reactivated["id"], "Reactivated via Google re-authentication")
 
     session_token = new_id("sess") + uuid.uuid4().hex
     await db.user_sessions.insert_one({
@@ -256,6 +261,9 @@ class ApplicationIn(BaseModel):
 APP_STATUSES = ["Submitted", "New", "Under Review", "More Information Requested", "Interview Requested",
                 "Interview Scheduled", "Recommended", "Approved", "Waitlisted", "Declined", "Withdrawn",
                 "Converted to Member", "Archived"]
+
+PENDING_APP_STATUSES = ["New", "Submitted", "Under Review", "More Information Requested",
+                        "Interview Requested", "Interview Scheduled", "Recommended", "Waitlisted"]
 
 # simple rate limit
 _rate = {}
@@ -743,6 +751,18 @@ async def set_member_status(member_id: str, payload: Dict[str, Any], user=Depend
     await add_timeline("member", member_id, f"Account {status}", user)
     return {"ok": True}
 
+@api_router.put("/members/{member_id}/reactivate")
+async def reactivate_member(member_id: str, user=Depends(require_roles(*STAFF_ROLES))):
+    m = await db.members.find_one({"id": member_id}, {"_id": 0})
+    if not m:
+        raise HTTPException(404, "Not found")
+    await db.members.update_one({"id": member_id}, {"$set": {"inactive": False, "inactive_since": None}})
+    if m.get("user_id"):
+        await db.users.update_one({"user_id": m["user_id"]}, {"$set": {"inactive": False}})
+    await log_audit(user, "member_reactivated", "member", member_id)
+    await add_timeline("member", member_id, "Reactivated by leadership", user)
+    return {"ok": True}
+
 # ---------------- public directory & content ----------------
 @api_router.get("/public/directory")
 async def public_directory(state: Optional[str] = None, focus: Optional[str] = None, q: Optional[str] = None):
@@ -863,14 +883,48 @@ async def public_upload(file: UploadFile = File(...)):
     await db.files.insert_one(dict(rec))
     return {"id": fid, "storage_path": result["path"], "original_filename": file.filename}
 
+def _resize_image(data, ctype, width):
+    """Return a width-constrained, compressed copy of an image for fast delivery. No-op for non-images."""
+    if not width:
+        return data, ctype
+    try:
+        w = int(width)
+    except Exception:
+        return data, ctype
+    if w <= 0 or w > 2000 or "image" not in (ctype or "") or "svg" in (ctype or ""):
+        return data, ctype
+    try:
+        img = Image.open(io.BytesIO(data))
+        fmt = (img.format or "JPEG").upper()
+        if img.width <= w:
+            return data, ctype
+        h = int(img.height * (w / float(img.width)))
+        img = img.resize((w, h), Image.LANCZOS)
+        out = io.BytesIO()
+        if fmt == "PNG":
+            img.save(out, "PNG", optimize=True); ctype = "image/png"
+        elif fmt == "WEBP":
+            img.save(out, "WEBP", quality=82); ctype = "image/webp"
+        else:
+            if img.mode in ("RGBA", "P", "LA"):
+                img = img.convert("RGB")
+            img.save(out, "JPEG", quality=82, optimize=True); ctype = "image/jpeg"
+        return out.getvalue(), ctype
+    except Exception:
+        return data, ctype
+
 @api_router.get("/files/{file_id}/download")
-async def download_file(file_id: str, user=Depends(get_current_user)):
+async def download_file(file_id: str, w: Optional[int] = None, user=Depends(get_current_user)):
     rec = await db.files.find_one({"id": file_id, "is_deleted": False}, {"_id": 0})
     if not rec:
         raise HTTPException(404, "File not found")
     data, ctype = await asyncio.to_thread(storage_mod.get_object, rec["storage_path"])
-    return StreamingResponse(io.BytesIO(data), media_type=rec.get("content_type", ctype),
-                             headers={"Content-Disposition": f'inline; filename="{rec["original_filename"]}"'})
+    ctype = rec.get("content_type", ctype)
+    if w:
+        data, ctype = await asyncio.to_thread(_resize_image, data, ctype, w)
+    return StreamingResponse(io.BytesIO(data), media_type=ctype,
+                             headers={"Content-Disposition": f'inline; filename="{rec["original_filename"]}"',
+                                      "Cache-Control": "private, max-age=3600"})
 
 async def _is_public_file(file_id: str) -> bool:
     if await db.members.find_one({"photo": file_id, "public_profile": True}, {"_id": 0}):
@@ -884,14 +938,18 @@ async def _is_public_file(file_id: str) -> bool:
     return False
 
 @api_router.get("/public/files/{file_id}")
-async def public_download_file(file_id: str):
+async def public_download_file(file_id: str, w: Optional[int] = None):
     """Serves only images referenced by public member profiles or public announcements."""
     rec = await db.files.find_one({"id": file_id, "is_deleted": False}, {"_id": 0})
     if not rec or not await _is_public_file(file_id):
         raise HTTPException(404, "File not found")
     data, ctype = await asyncio.to_thread(storage_mod.get_object, rec["storage_path"])
-    return StreamingResponse(io.BytesIO(data), media_type=rec.get("content_type", ctype),
-                             headers={"Content-Disposition": f'inline; filename="{rec["original_filename"]}"'})
+    ctype = rec.get("content_type", ctype)
+    if w:
+        data, ctype = await asyncio.to_thread(_resize_image, data, ctype, w)
+    return StreamingResponse(io.BytesIO(data), media_type=ctype,
+                             headers={"Content-Disposition": f'inline; filename="{rec["original_filename"]}"',
+                                      "Cache-Control": "public, max-age=86400"})
 
 @api_router.get("/files")
 async def list_files(user=Depends(get_current_user)):
@@ -3389,6 +3447,14 @@ async def dashboard_stats(user=Depends(require_roles(*STAFF_ROLES))):
     stats["by_status"] = {s: await c(db.applications, {"status": s}) for s in APP_STATUSES}
     stats["recent_applications"] = await db.applications.find({}, {"_id": 0}).sort("created_at", -1).limit(6).to_list(6)
     stats["upcoming_events"] = await db.events.find({"status": {"$in": ["Approved", "Scheduled"]}}, {"_id": 0}).sort("date", 1).limit(5).to_list(5)
+    # aging applications (awaiting a decision 15+ days) — surfaced on the leadership dashboard
+    aging = []
+    async for a in db.applications.find({"status": {"$in": PENDING_APP_STATUSES}, "type": {"$ne": "inquiry"}}, {"_id": 0}).sort("created_at", 1):
+        age = _days_since(a.get("created_at"))
+        if age is not None and age >= 15:
+            aging.append({"id": a["id"], "name": a.get("name"), "ref": a.get("ref"),
+                          "type": a.get("type"), "status": a.get("status"), "days": age})
+    stats["aging_applications"] = aging
     return stats
 
 # ---------------- reports & audit ----------------
@@ -3647,31 +3713,93 @@ async def run_reminders():
                                "Member goal overdue",
                                f"Goal '{g['title']}' for {m['name']} is overdue and may need follow-up.",
                                None, ADMIN_EMAIL)
-    # 4. Inactivity nudges (14 / 30 / 45 / 60 days) — never auto-deactivate
+    # 4. Inactivity nudges (5 / 14 / 30 / 45 / 60 days) — never auto-deactivate; 30d = soft security flag
     async for u in db.users.find({"account_status": "active", "role": {"$in": ["ambassador", "volunteer"]}}, {"_id": 0}):
         d = _days_since(u.get("last_login"))
         if d is None:
             continue
-        if d >= 60:
-            await _remind_once(f"inact60:{u['user_id']}:{today}", None,
-                               "Member inactive 60+ days — review",
-                               f"{u['name']} ({u['email']}) has not logged in for {d} days. Administrative review recommended (no automatic deactivation).",
-                               None, ADMIN_EMAIL)
-        elif d >= 45:
-            await _remind_once(f"inact45:{u['user_id']}:{today}", None,
-                               "Member inactive 45+ days",
-                               f"{u['name']} ({u['email']}) has not logged in for {d} days. Director follow-up suggested.",
-                               None, ADMIN_EMAIL)
-        elif d >= 30:
+        if d >= 30:
+            # Soft security flag: "Inactive — Reauthentication Required" (data preserved, access not blocked)
+            mem = await db.members.find_one({"user_id": u["user_id"]}, {"_id": 0})
+            if mem and not mem.get("inactive"):
+                await db.members.update_one({"id": mem["id"]}, {"$set": {"inactive": True, "inactive_since": now_iso()}})
+                await db.users.update_one({"user_id": u["user_id"]}, {"$set": {"inactive": True}})
+                await add_timeline("member", mem["id"], f"Flagged Inactive — reauthentication required ({d}+ days no login)")
+                for lid in await _leadership_user_ids():
+                    await notify_user(lid, "Member flagged inactive",
+                                      f"{u['name']} has not signed in for {d} days and is now marked Inactive — Reauthentication Required.",
+                                      f"/portal/members/{mem['id']}", "warning", "Members")
             await _remind_once(f"inact30:{u['user_id']}:{today}", u["user_id"],
-                               "We miss you at CEC Connect",
-                               "It's been over 30 days since your last visit. Log in to check your goals, documents, and announcements.",
+                               "Reauthentication required",
+                               "It's been over 30 days since your last visit. Please sign in with Google to reactivate your account — your data is safe.",
                                "/portal", u.get("email"))
+            if d >= 60:
+                await _remind_once(f"inact60:{u['user_id']}:{today}", None,
+                                   "Member inactive 60+ days — review",
+                                   f"{u['name']} ({u['email']}) has not logged in for {d} days. Administrative review recommended (no automatic deactivation).",
+                                   None, ADMIN_EMAIL)
+            elif d >= 45:
+                await _remind_once(f"inact45:{u['user_id']}:{today}", None,
+                                   "Member inactive 45+ days",
+                                   f"{u['name']} ({u['email']}) has not logged in for {d} days. Director follow-up suggested.",
+                                   None, ADMIN_EMAIL)
         elif d >= 14:
             await _remind_once(f"inact14:{u['user_id']}:{today}", u["user_id"],
                                "Friendly reminder from CEC Connect",
                                "It's been a couple of weeks — log in to stay on top of your onboarding and activity.",
                                "/portal", u.get("email"))
+        elif d >= 5:
+            await _remind_once(f"inact5:{u['user_id']}:{today}", u["user_id"],
+                               "We miss you at CEC Connect",
+                               "It's been a few days — log in to check your goals, documents, and announcements.",
+                               "/portal", u.get("email"))
+
+    # 5. Unanswered member→leadership messages (48h) — re-alerts on each new member message, clears on staff reply
+    now_dt = datetime.now(timezone.utc)
+    seen_threads = set()
+    async for msg in db.messages.find({"to_leadership": True}, {"_id": 0}).sort("created_at", -1):
+        tid = msg.get("thread_id")
+        if not tid or tid in seen_threads:
+            continue
+        seen_threads.add(tid)
+        thread = await db.messages.find({"thread_id": tid}, {"_id": 0}).sort("created_at", 1).to_list(1000)
+        last_member, staff_replied_after = None, False
+        for tm in thread:
+            if tm.get("from_role") in STAFF_ROLES:
+                if last_member:
+                    staff_replied_after = True
+            else:
+                last_member, staff_replied_after = tm, False
+        if not last_member or staff_replied_after:
+            continue
+        try:
+            lm_dt = datetime.fromisoformat(str(last_member.get("created_at")).replace("Z", "+00:00"))
+            if lm_dt.tzinfo is None:
+                lm_dt = lm_dt.replace(tzinfo=timezone.utc)
+            hours = (now_dt - lm_dt).total_seconds() / 3600
+        except Exception:
+            hours = 0
+        if hours < 48:
+            continue
+        for lid in await _leadership_user_ids():
+            await _remind_once(f"msgfollow:{tid}:{last_member['id']}:{lid}", lid,
+                               "Unanswered member message",
+                               f"{last_member.get('from_name')} messaged leadership over 48h ago without a reply: \"{last_member.get('subject')}\".",
+                               "/portal/messages", None)
+
+    # 6. Application aging alerts (15 / 30 days awaiting a decision) — leadership
+    async for a in db.applications.find({"status": {"$in": PENDING_APP_STATUSES}, "type": {"$ne": "inquiry"}}, {"_id": 0}):
+        age = _days_since(a.get("created_at"))
+        if age is None:
+            continue
+        milestone = 30 if age >= 30 else (15 if age >= 15 else None)
+        if not milestone:
+            continue
+        for lid in await _leadership_user_ids():
+            await _remind_once(f"appage{milestone}:{a['id']}:{lid}", lid,
+                               f"Application aging {milestone}+ days",
+                               f"{a.get('name')} ({a.get('ref')}) has been awaiting a decision for {age} days (status: {a.get('status')}).",
+                               f"/portal/applications/{a['id']}", None)
 
 @api_router.post("/cron/reminders")
 async def cron_reminders(request: Request, authorization: Optional[str] = Header(None), x_webhook_id: Optional[str] = Header(None)):

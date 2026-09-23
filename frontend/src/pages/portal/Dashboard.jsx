@@ -49,6 +49,23 @@ export default function Dashboard() {
           <StatCard label="Total Members" value={stats.total_members} icon={Users} accent="navy" />
         </div>
 
+        {stats.aging_applications?.length > 0 && (
+          <div className="bg-amber-50 border border-amber-200 rounded-xl p-5" data-testid="aging-applications">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-head font-semibold text-amber-800 flex items-center gap-2"><Clock size={16} /> Applications Awaiting a Decision</h3>
+              <span className="text-xs font-medium text-amber-700">{stats.aging_applications.length} aging (15+ days)</span>
+            </div>
+            <div className="space-y-2">
+              {stats.aging_applications.slice(0, 6).map((a) => (
+                <div key={a.id} onClick={() => navigate(`/portal/applications/${a.id}`)} className="flex items-center justify-between p-2.5 rounded-lg bg-white hover:bg-amber-100/50 cursor-pointer" data-testid={`aging-app-${a.id}`}>
+                  <div><p className="text-sm font-medium text-slate-800">{a.name}</p><p className="text-xs text-slate-400 font-mono-data">{a.ref} · {a.type} · {a.status}</p></div>
+                  <span className={`text-xs font-semibold px-2 py-1 rounded-full ${a.days >= 30 ? "bg-rose-100 text-rose-700" : "bg-amber-100 text-amber-700"}`}>{a.days} days</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         <div className="grid lg:grid-cols-3 gap-6">
           <div className="bg-white border border-slate-200 rounded-xl p-5">
             <h3 className="font-head font-semibold text-brand-navy mb-3">Applications by Type</h3>

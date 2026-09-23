@@ -21,6 +21,7 @@ export default function MemberDetail() {
   useEffect(() => { load(); api.get(`/goals?member_id=${id}`).then((r) => setGoals(r.data)).catch(() => {}); /* eslint-disable-next-line */ }, [id]);
 
   const setStatus = async (status) => { await api.put(`/members/${id}/status`, { status }); toast.success(`Account ${status}`); load(); };
+  const reactivate = async () => { await api.put(`/members/${id}/reactivate`); toast.success("Member reactivated"); load(); };
   const togglePublic = async () => { await api.put(`/members/${id}`, { public_profile: !m.public_profile }); toast.success("Directory visibility updated"); load(); };
 
   if (!m) return <Loading />;
@@ -30,7 +31,7 @@ export default function MemberDetail() {
   return (
     <div className="space-y-5">
       <Button variant="ghost" onClick={() => navigate("/portal/members")} className="text-slate-500"><ArrowLeft size={16} className="mr-1" /> Back</Button>
-      <PageTitle title={m.name} subtitle={`${ROLE_LABELS[m.role]} · ${m.state || "No state"}`} action={<StatusBadge status={m.account_status} />} />
+      <PageTitle title={m.name} subtitle={`${ROLE_LABELS[m.role]} · ${m.state || "No state"}`} action={<div className="flex items-center gap-2">{m.inactive && <span className="text-xs font-semibold px-2 py-1 rounded-full bg-amber-100 text-amber-700" data-testid="inactive-badge">Inactive — Reauth Required</span>}<StatusBadge status={m.account_status} /></div>} />
 
       <div className="grid lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 space-y-5">
@@ -76,6 +77,7 @@ export default function MemberDetail() {
             <h3 className="font-head font-semibold text-brand-navy">Account Actions</h3>
             <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={m.public_profile} onChange={togglePublic} className="accent-[#D6189B]" data-testid="public-profile-toggle" /> Show in public directory</label>
             <div className="flex flex-col gap-2 pt-2">
+              {m.inactive && <Button variant="outline" onClick={reactivate} className="text-amber-700 border-amber-200" data-testid="reactivate-btn">Reactivate (clear inactive flag)</Button>}
               {m.account_status === "active" ? <Button variant="outline" onClick={() => setStatus("suspended")} className="text-rose-600 border-rose-200" data-testid="suspend-btn">Suspend Account</Button> : <Button variant="outline" onClick={() => setStatus("active")} className="text-emerald-600 border-emerald-200" data-testid="restore-btn">Restore Account</Button>}
             </div>
           </div>
