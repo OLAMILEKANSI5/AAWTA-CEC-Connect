@@ -180,9 +180,22 @@ Part of a large Ambassador/Volunteer lifecycle overhaul (build order: Messaging 
 - index.html iOS web-app meta: viewport-fit=cover (safe areas), apple-mobile-web-app-capable + status-bar-style + title, mobile-web-app-capable, format-detection=telephone=no.
 - Full Apple Beta Readiness matrix (Ready/Needs Work/Not Yet) at **/app/memory/APPLE_BETA_READINESS.md**. Verdict: no core re-architecture needed. P0 gaps for beta: native token auth (ASWebAuthenticationSession + Keychain; backend already accepts Bearer), App Privacy label + camera/photo permission strings. P1: APNs push (fan-out from central notify_user + device-registration endpoint), Universal Links (apple-app-site-association). P2: notification preference center, accessibility pass. Role-scoped mobile nav already in place.
 
-## Next Tasks
-- **PHASE 2 (next)** — Automated reminders & account lifecycle (items 4-8): 48h unanswered-conversation follow-up (clears on reply), pending-action reminders, 5-day inactivity reminder (once, tracked), 30-day inactivity → "Inactive — Reauthentication Required" (data preserved; Google re-auth or leadership reactivation), application aging alerts 15/30 days on leadership dashboard. Run via platform cron.
-- **PHASE 3** — Event/gallery image performance (item 10): upload compression + generated thumbnails, thumbnails on cards/gallery, full-res on open, lazy load + caching headers.
+## Implemented (2026-06, Phase 2 — Reminders & Account Lifecycle + Phase 3 — Image Performance)
+### Phase 2 (items 4-8) — all cron-driven via existing POST /api/cron/reminders (daily-reminders in .emergent/crons.yml)
+- **5-day inactivity nudge**: friendly member notification+email at 5+ days no login (once, tracked via reminder_sent). Kept existing 14/45/60-day nudges.
+- **30-day inactivity SOFT security flag**: at 30+ days no login, member is flagged `inactive:true` + `inactive_since` (NEVER deleted, access NOT blocked — soft flag only per user choice). Leadership notified ("Member flagged inactive", category Members). Cleared automatically on Google re-auth (create_session clears member+user `inactive`, writes reactivation timeline) OR by leadership via PUT /api/members/{id}/reactivate (staff-only).
+- **48h unanswered message follow-up**: for member→leadership (`to_leadership`) threads whose latest message is from a member and >48h old with no staff reply, all leadership get a portal notification ("Unanswered member message"). Auto-clears on staff reply; re-alerts on each new member message (keyed by last member msg id + leader id).
+- **Application aging alerts (15/30 days)**: leadership notified once per milestone for applications in PENDING_APP_STATUSES (non-inquiry) awaiting a decision 15+/30+ days. Also surfaced on the leadership Dashboard as an amber "Applications Awaiting a Decision" card (GET /api/dashboard/stats → `aging_applications`), rows click through to the application.
+- Frontend: Dashboard aging card (testid aging-applications / aging-app-<id>); MemberDetail amber inactive badge (testid inactive-badge) + Reactivate button (testid reactivate-btn).
+### Phase 3 (item 10) — Event/gallery/profile image performance
+- Server-side on-the-fly resize+compress via Pillow: GET /api/public/files/{id}?w=<n> and /api/files/{id}/download?w=<n> return a width-constrained, quality-82 JPEG/PNG/WEBP copy (no-op for non-images or when already smaller; w capped 2000). Cache-Control headers set (public 86400 / private 3600) — NOTE: preview ingress/Cloudflare rewrites these to `no-store`, so browser caching gain is infra-limited; the ~74× payload reduction (2.9MB→39KB at w=200) still delivers the perf win.
+- Frontend now requests thumbnails with `loading="lazy"`: EventCard w=500, Gallery grid w=500 (lightbox full-res), Home spotlights w=400, Directory w=500, PublicEventDetail hero w=1200.
+- Verified: iteration_19 — 8/8 backend pytest (test_phase2_phase3.py) + 5/5 verify_phase2.py + full UI. No defects.
+
+## Next Tasks (remaining from the 10-part request)
+- P1: **Notification Center UI** — consolidate leadership notifications with category filters (Messages, Applications, Onboarding, Documents, Members) + quick action links.
+- P2: **Server refactor** — split 3800+ line server.py into routers (files/images, members, applications, reminders, dashboards); migrate deprecated @app.on_event startup/shutdown → lifespan.
+- P2: External Google Calendar 2-way sync (currently .ics downloads + add-to-calendar links).
 
 ## Implemented (2026-06, Comms/Docs Phase 1 — items 1,2,3,9)
 - notify_user gains `category`; `_leadership_user_ids()` = active users with role in STAFF_ROLES (super_admin/director/administrator).

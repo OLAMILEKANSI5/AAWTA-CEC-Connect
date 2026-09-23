@@ -1,0 +1,37 @@
+{
+  "summary": "Phase 2 (inactivity soft-flag/aging apps/48h follow-up/reactivate) + Phase 3 (image ?w= resize) verified. Backend pytest: 8/8 pass. UI: Dashboard aging card renders + row click navigates to application detail; MemberDetail shows amber Inactive badge and Reactivate button which successfully clears the flag on click (badge + button disappear after reload). Public event images and Gallery use ?w= thumbnails with loading='lazy' (no broken images). PUT /api/members/{id}/reactivate: staff 200, volunteer 403. Cron 200 with WEBHOOK_CRON_SECRET, 401 without. Image resize: 2.9MB PNG -> 39KB at ?w=200 (~74x reduction) — confirmed on real seeded event image via /api/public/files/{id}?w=200.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/public/files/{id} and /api/files/{id}/download", "issue": "Backend sets Cache-Control: public, max-age=86400 / private, max-age=3600 but ingress/edge (Cloudflare) overrides it to 'no-store, no-cache, must-revalidate' — browser caching benefit from Phase 3 is lost end-to-end. Payload savings from ?w= still deliver most of the perf win. Not a code bug in server.py; would need infra-level allowlist for image endpoints."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_phase2_phase3.py",
+    "/app/backend/tests/verify_phase2.py",
+    "/app/test_reports/pytest/phase2_phase3.xml"
+  ],
+  "action_items": [
+    "OPTIONAL: Investigate ingress rewrite that strips backend Cache-Control on /api/public/files/* — file endpoints will not benefit from browser/CDN caching until fixed."
+  ],
+  "critical_code_review_comments": [
+    "server.py is 3852 lines — long past the 700-line guideline. Recommend splitting into modules (files/images, members, applications, reminders, dashboards).",
+    "Deprecated @app.on_event('startup'/'shutdown') usage — migrate to lifespan handlers.",
+    "/api/public/files/{id} sets Cache-Control but the response reaching the browser is 'no-store' (verified via curl). Add a note or headers pass-through at ingress; otherwise Phase 3 caching gains are only bandwidth-side."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_phase2_phase3.py (new)"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "Admin: tok_admtest ; Volunteer: tok_g3other ; Cron secret: cec_cron_9f3a71b2e8d4c6057aa1be24f0d9c3e5",
+  "seed_data_creation": "Test seeds members/applications with prefix p2ui/p2test — cleaned up after tests. verify_phase2.py + test_phase2_phase3.py are idempotent.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Phase 2 + Phase 3 fully verified — 8 pytest cases in /app/backend/tests/test_phase2_phase3.py + 5 assertions in verify_phase2.py all pass. UI aging card testid='aging-applications' and row testid='aging-app-<id>' behave; MemberDetail testids 'inactive-badge' and 'reactivate-btn' behave; both disappear after PUT /api/members/{id}/reactivate. Only known minor: ingress rewrites Cache-Control to 'no-store' for /api/public/files/* (infra, not code).",
+  "rca of the issue": "N/A — no defect found in the current phase."
+}
