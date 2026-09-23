@@ -43,6 +43,7 @@ import Users from "@/pages/portal/Users";
 import Settings from "@/pages/portal/Settings";
 import TemplateEditor from "@/pages/portal/TemplateEditor";
 import OnboardingDashboard from "@/pages/portal/OnboardingDashboard";
+import ServiceHours from "@/pages/portal/ServiceHours";
 
 const AuthCallback = () => {
   const navigate = useNavigate();
@@ -122,6 +123,7 @@ function AppRouter() {
       <Route path="/portal/settings" element={<ProtectedRoute roles={STAFF}><Settings /></ProtectedRoute>} />
       <Route path="/portal/templates" element={<ProtectedRoute roles={STAFF}><TemplateEditor /></ProtectedRoute>} />
       <Route path="/portal/onboarding-board" element={<ProtectedRoute roles={STAFF}><OnboardingDashboard /></ProtectedRoute>} />
+      <Route path="/portal/service-hours" element={<ProtectedRoute roles={["super_admin", "director", "administrator", "ambassador", "volunteer"]}><ServiceHours /></ProtectedRoute>} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

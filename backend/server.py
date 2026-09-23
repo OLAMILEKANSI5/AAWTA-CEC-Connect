@@ -1822,9 +1822,14 @@ async def set_checkin_assignees(event_id: str, payload: CheckinAssigneesIn, user
     if not ev: raise HTTPException(404, "Not found")
     if user["role"] not in STAFF_ROLES and ev.get("submitted_by_id") != user["user_id"]:
         raise HTTPException(403, "Forbidden")
+    previous = set(ev.get("checkin_assignees") or [])
+    new_ids = set(payload.user_ids)
     await db.events.update_one({"id": event_id}, {"$set": {"checkin_assignees": payload.user_ids}})
-    for uid in payload.user_ids:
+    for uid in (new_ids - previous):
         await notify_user(uid, "Check-In Volunteer assignment", f"You can now run check-in for {ev['name']}.", f"/portal/events/{event_id}/checkin")
+        mem = await db.members.find_one({"user_id": uid}, {"_id": 0, "id": 1})
+        if mem:
+            await add_timeline("member", mem["id"], f"Assigned to check-in for event: {ev['name']}", user)
     await log_audit(user, "checkin_assignees_set", "event", event_id, {"count": len(payload.user_ids)})
     return {"ok": True, "checkin_assignees": payload.user_ids}
 
@@ -2895,6 +2900,317 @@ async def list_reports(user=Depends(get_current_user)):
         return await db.activity_reports.find({}, {"_id": 0}).sort("created_at", -1).to_list(1000)
     m = await db.members.find_one({"user_id": user["user_id"]}, {"_id": 0})
     return await db.activity_reports.find({"member_id": m["id"] if m else "none"}, {"_id": 0}).sort("created_at", -1).to_list(1000)
+
+# ---------------- service hours ----------------
+HOUR_MILESTONES = [20, 50, 100]
+
+
+async def _my_member_or_400(user):
+    m = await db.members.find_one({"user_id": user["user_id"]}, {"_id": 0})
+    if not m:
+        raise HTTPException(400, "No member profile is linked to your account")
+    return m
+
+
+async def _event_name(event_id):
+    if not event_id:
+        return None
+    e = await db.events.find_one({"id": event_id}, {"_id": 0, "name": 1})
+    return (e or {}).get("name")
+
+
+async def _hours_summary_for(member_id):
+    approved = 0.0
+    pending = 0.0
+    active = None
+    async for e in db.service_hours.find({"member_id": member_id}, {"_id": 0}):
+        if e["status"] == "approved":
+            approved += e.get("hours", 0) or 0
+        elif e["status"] == "pending":
+            pending += e.get("hours", 0) or 0
+        elif e["status"] == "active":
+            active = e
+    m = await db.members.find_one({"id": member_id}, {"_id": 0, "hour_milestones": 1})
+    return {"approved": round(approved, 2), "pending": round(pending, 2), "active": active,
+            "earned_milestones": (m or {}).get("hour_milestones", [])}
+
+
+async def _check_hour_milestones(member_id, user):
+    total = 0.0
+    async for e in db.service_hours.find({"member_id": member_id, "status": "approved"}, {"_id": 0, "hours": 1}):
+        total += e.get("hours", 0) or 0
+    m = await db.members.find_one({"id": member_id}, {"_id": 0})
+    if not m:
+        return []
+    earned = set(m.get("hour_milestones") or [])
+    newly = [ms for ms in HOUR_MILESTONES if total >= ms and ms not in earned]
+    if newly:
+        earned.update(newly)
+        await db.members.update_one({"id": member_id}, {"$set": {"hour_milestones": sorted(earned)}})
+        for ms in newly:
+            await add_timeline("member", member_id, f"Reached {ms} approved service hours", user)
+            if m.get("user_id"):
+                await notify_user(m["user_id"], f"Milestone reached: {ms} hours!",
+                                  f"You've completed {ms} approved service hours — download your certificate.",
+                                  "/portal/service-hours", "success")
+    return sorted(earned)
+
+
+class ClockInIn(BaseModel):
+    event_id: Optional[str] = None
+    activity_type: str = "event"
+    category: Optional[str] = None
+    description: Optional[str] = None
+
+
+class ManualHoursIn(BaseModel):
+    date: str
+    hours: float
+    activity_type: str = "remote"
+    category: Optional[str] = None
+    description: Optional[str] = None
+    event_id: Optional[str] = None
+
+
+@api_router.post("/service-hours/clock-in")
+async def clock_in(payload: ClockInIn, user=Depends(get_current_user)):
+    m = await _my_member_or_400(user)
+    if await db.service_hours.find_one({"member_id": m["id"], "status": "active"}, {"_id": 0}):
+        raise HTTPException(400, "You are already clocked in. Clock out first.")
+    doc = {"id": new_id("hrs"), "member_id": m["id"], "member_name": m.get("name"), "user_id": user["user_id"], "role": m.get("role"),
+           "event_id": payload.event_id, "event_name": await _event_name(payload.event_id),
+           "activity_type": payload.activity_type, "category": payload.category, "description": payload.description,
+           "date": now_iso()[:10], "clock_in": now_iso(), "clock_out": None, "hours": 0.0,
+           "source": "clock", "status": "active", "submitted_by_id": user["user_id"], "submitted_by_name": user["name"],
+           "reviewed_by": None, "reviewed_at": None, "review_note": None, "created_at": now_iso(), "updated_at": now_iso()}
+    await db.service_hours.insert_one(dict(doc))
+    return clean(doc)
+
+
+@api_router.post("/service-hours/clock-out")
+async def clock_out(user=Depends(get_current_user)):
+    m = await _my_member_or_400(user)
+    active = await db.service_hours.find_one({"member_id": m["id"], "status": "active"}, {"_id": 0})
+    if not active:
+        raise HTTPException(400, "You are not clocked in")
+    ci = datetime.fromisoformat(active["clock_in"])
+    if ci.tzinfo is None:
+        ci = ci.replace(tzinfo=timezone.utc)
+    hrs = round((datetime.now(timezone.utc) - ci).total_seconds() / 3600.0, 2)
+    await db.service_hours.update_one({"id": active["id"]}, {"$set": {"clock_out": now_iso(), "hours": hrs, "status": "pending", "updated_at": now_iso()}})
+    if m.get("id"):
+        await add_timeline("member", m["id"], f"Clocked out — {hrs}h submitted for review", user)
+    return await db.service_hours.find_one({"id": active["id"]}, {"_id": 0})
+
+
+@api_router.post("/service-hours")
+async def submit_manual_hours(payload: ManualHoursIn, user=Depends(get_current_user)):
+    m = await _my_member_or_400(user)
+    if payload.hours <= 0 or payload.hours > 24:
+        raise HTTPException(400, "Hours must be between 0 and 24")
+    doc = {"id": new_id("hrs"), "member_id": m["id"], "member_name": m.get("name"), "user_id": user["user_id"], "role": m.get("role"),
+           "event_id": payload.event_id, "event_name": await _event_name(payload.event_id),
+           "activity_type": payload.activity_type, "category": payload.category, "description": payload.description,
+           "date": payload.date, "clock_in": None, "clock_out": None, "hours": round(payload.hours, 2),
+           "source": "manual", "status": "pending", "submitted_by_id": user["user_id"], "submitted_by_name": user["name"],
+           "reviewed_by": None, "reviewed_at": None, "review_note": None, "created_at": now_iso(), "updated_at": now_iso()}
+    await db.service_hours.insert_one(dict(doc))
+    if m.get("id"):
+        await add_timeline("member", m["id"], f"Submitted {doc['hours']}h for review", user)
+    return clean(doc)
+
+
+@api_router.get("/service-hours/me")
+async def my_service_hours(user=Depends(get_current_user)):
+    m = await db.members.find_one({"user_id": user["user_id"]}, {"_id": 0})
+    if not m:
+        return {"entries": [], "summary": {"approved": 0, "pending": 0, "active": None, "earned_milestones": []},
+                "milestones_available": HOUR_MILESTONES, "member_id": None, "member_name": user["name"]}
+    entries = await db.service_hours.find({"member_id": m["id"]}, {"_id": 0}).sort("created_at", -1).to_list(1000)
+    return {"entries": entries, "summary": await _hours_summary_for(m["id"]),
+            "milestones_available": HOUR_MILESTONES, "member_id": m["id"], "member_name": m.get("name")}
+
+
+@api_router.get("/service-hours/summary")
+async def hours_summary(user=Depends(require_roles(*STAFF_ROLES)), month: Optional[str] = None):
+    match = {"status": {"$in": ["approved", "pending"]}}
+    if month:
+        match["date"] = {"$regex": f"^{month}"}
+    pipeline = [{"$match": match},
+                {"$group": {"_id": {"member_id": "$member_id", "member_name": "$member_name", "role": "$role"},
+                            "approved": {"$sum": {"$cond": [{"$eq": ["$status", "approved"]}, "$hours", 0]}},
+                            "pending": {"$sum": {"$cond": [{"$eq": ["$status", "pending"]}, "$hours", 0]}},
+                            "entries": {"$sum": 1}}},
+                {"$sort": {"approved": -1}}]
+    rows = []
+    async for r in db.service_hours.aggregate(pipeline):
+        rows.append({"member_id": r["_id"]["member_id"], "member_name": r["_id"]["member_name"], "role": r["_id"]["role"],
+                     "approved": round(r["approved"], 2), "pending": round(r["pending"], 2), "entries": r["entries"]})
+    return {"rows": rows}
+
+
+@api_router.get("/service-hours/export.csv")
+async def export_hours_csv(user=Depends(require_roles(*STAFF_ROLES)), status: Optional[str] = None, member_id: Optional[str] = None, month: Optional[str] = None):
+    q = {}
+    if status:
+        q["status"] = status
+    if member_id:
+        q["member_id"] = member_id
+    if month:
+        q["date"] = {"$regex": f"^{month}"}
+    entries = await db.service_hours.find(q, {"_id": 0}).sort("date", -1).to_list(5000)
+    import csv as _csv
+    buf = io.StringIO()
+    w = _csv.writer(buf)
+    w.writerow(["Date", "Volunteer", "Role", "Activity", "Category", "Event", "Hours", "Status", "Description", "Reviewed By"])
+    for e in entries:
+        w.writerow([e.get("date"), e.get("member_name"), e.get("role"), e.get("activity_type"), e.get("category"),
+                    e.get("event_name"), e.get("hours"), e.get("status"), e.get("description"), e.get("reviewed_by")])
+    return StreamingResponse(io.BytesIO(buf.getvalue().encode()), media_type="text/csv",
+                             headers={"Content-Disposition": "attachment; filename=service_hours.csv"})
+
+
+@api_router.get("/service-hours")
+async def list_service_hours(user=Depends(require_roles(*STAFF_ROLES)), status: Optional[str] = None, member_id: Optional[str] = None,
+                             event_id: Optional[str] = None, activity_type: Optional[str] = None, month: Optional[str] = None,
+                             date_from: Optional[str] = None, date_to: Optional[str] = None):
+    q = {}
+    if status:
+        q["status"] = status
+    if member_id:
+        q["member_id"] = member_id
+    if event_id:
+        q["event_id"] = event_id
+    if activity_type:
+        q["activity_type"] = activity_type
+    if month:
+        q["date"] = {"$regex": f"^{month}"}
+    elif date_from or date_to:
+        rng = {}
+        if date_from:
+            rng["$gte"] = date_from
+        if date_to:
+            rng["$lte"] = date_to
+        q["date"] = rng
+    entries = await db.service_hours.find(q, {"_id": 0}).sort("created_at", -1).to_list(2000)
+    qc = {k: v for k, v in q.items() if k != "status"}
+    counts = {s: await db.service_hours.count_documents({**qc, "status": s}) for s in ("pending", "approved", "rejected", "active")}
+    return {"entries": entries, "counts": counts,
+            "totals": {"approved": round(sum(e.get("hours", 0) or 0 for e in entries if e["status"] == "approved"), 2),
+                       "pending": round(sum(e.get("hours", 0) or 0 for e in entries if e["status"] == "pending"), 2)}}
+
+
+class HoursStatusIn(BaseModel):
+    status: str
+    note: Optional[str] = None
+
+
+@api_router.put("/service-hours/{hid}/status")
+async def set_hours_status(hid: str, payload: HoursStatusIn, user=Depends(require_roles(*STAFF_ROLES))):
+    if payload.status not in ("pending", "approved", "rejected"):
+        raise HTTPException(400, "Invalid status")
+    e = await db.service_hours.find_one({"id": hid}, {"_id": 0})
+    if not e:
+        raise HTTPException(404, "Not found")
+    await db.service_hours.update_one({"id": hid}, {"$set": {"status": payload.status, "review_note": payload.note,
+                                                             "reviewed_by": user["name"], "reviewed_at": now_iso(), "updated_at": now_iso()}})
+    await log_audit(user, f"service_hours_{payload.status}", "service_hours", hid, {"member_id": e.get("member_id")})
+    if payload.status == "approved" and e.get("member_id"):
+        await add_timeline("member", e["member_id"], f"{e.get('hours')}h approved", user)
+        await _check_hour_milestones(e["member_id"], user)
+    return await db.service_hours.find_one({"id": hid}, {"_id": 0})
+
+
+class HoursEditIn(BaseModel):
+    hours: Optional[float] = None
+    description: Optional[str] = None
+    activity_type: Optional[str] = None
+    category: Optional[str] = None
+    date: Optional[str] = None
+    event_id: Optional[str] = None
+
+
+@api_router.put("/service-hours/{hid}")
+async def edit_hours(hid: str, payload: HoursEditIn, user=Depends(require_roles(*STAFF_ROLES))):
+    e = await db.service_hours.find_one({"id": hid}, {"_id": 0})
+    if not e:
+        raise HTTPException(404, "Not found")
+    upd = {k: v for k, v in payload.model_dump(exclude_unset=True).items()}
+    if "event_id" in upd:
+        upd["event_name"] = await _event_name(upd["event_id"])
+    upd["updated_at"] = now_iso()
+    await db.service_hours.update_one({"id": hid}, {"$set": upd})
+    await log_audit(user, "service_hours_edited", "service_hours", hid, {"fields": list(upd.keys())})
+    if e["status"] == "approved" and e.get("member_id"):
+        await _check_hour_milestones(e["member_id"], user)
+    return await db.service_hours.find_one({"id": hid}, {"_id": 0})
+
+
+@api_router.delete("/service-hours/{hid}")
+async def delete_hours(hid: str, user=Depends(get_current_user)):
+    e = await db.service_hours.find_one({"id": hid}, {"_id": 0})
+    if not e:
+        raise HTTPException(404, "Not found")
+    if user["role"] not in STAFF_ROLES and e.get("user_id") != user["user_id"]:
+        raise HTTPException(403, "Forbidden")
+    if user["role"] not in STAFF_ROLES and e["status"] == "approved":
+        raise HTTPException(400, "Approved hours cannot be deleted")
+    await db.service_hours.delete_one({"id": hid})
+    await log_audit(user, "service_hours_deleted", "service_hours", hid)
+    return {"ok": True}
+
+
+def _certificate_pdf_bytes(name, milestone, total_hours, role):
+    from reportlab.lib.pagesizes import letter, landscape
+    from reportlab.lib import colors as rc
+    from reportlab.pdfgen import canvas as pdfcanvas
+    from reportlab.lib.units import inch
+    buf = io.BytesIO()
+    W, H = landscape(letter)
+    c = pdfcanvas.Canvas(buf, pagesize=(W, H))
+    c.setStrokeColor(rc.HexColor("#D6189B")); c.setLineWidth(6); c.rect(0.4 * inch, 0.4 * inch, W - 0.8 * inch, H - 0.8 * inch)
+    c.setStrokeColor(rc.HexColor("#2E3192")); c.setLineWidth(2); c.rect(0.55 * inch, 0.55 * inch, W - 1.1 * inch, H - 1.1 * inch)
+    cx = W / 2
+    c.setFillColor(rc.HexColor("#2E3192")); c.setFont("Helvetica-Bold", 30); c.drawCentredString(cx, H - 1.6 * inch, "Certificate of Service")
+    c.setFillColor(rc.HexColor("#64748b")); c.setFont("Helvetica", 13); c.drawCentredString(cx, H - 2.0 * inch, "AAWTA Community Engagement Committee")
+    c.setFillColor(rc.HexColor("#334155")); c.setFont("Helvetica", 14); c.drawCentredString(cx, H - 2.7 * inch, "This certifies that")
+    c.setFillColor(rc.HexColor("#0f172a")); c.setFont("Helvetica-Bold", 26); c.drawCentredString(cx, H - 3.35 * inch, name or "")
+    c.setFillColor(rc.HexColor("#334155")); c.setFont("Helvetica", 14)
+    c.drawCentredString(cx, H - 3.95 * inch, f"has completed {milestone}+ hours of dedicated {role or 'volunteer'} service")
+    c.setFont("Helvetica", 12); c.drawCentredString(cx, H - 4.3 * inch, f"Total approved service hours: {total_hours}")
+    c.setFillColor(rc.HexColor("#D6189B")); c.setFont("Helvetica-Bold", 48); c.drawCentredString(cx, H - 5.45 * inch, str(milestone))
+    c.setFillColor(rc.HexColor("#64748b")); c.setFont("Helvetica", 11); c.drawCentredString(cx, H - 5.8 * inch, "HOURS OF SERVICE")
+    c.setFillColor(rc.HexColor("#94a3b8")); c.setFont("Helvetica", 10)
+    c.drawCentredString(cx, 0.95 * inch, f"Awarded {datetime.now(timezone.utc).strftime('%B %d, %Y')} · African American Women Trucking Association")
+    c.showPage(); c.save(); buf.seek(0)
+    return buf.getvalue()
+
+
+@api_router.get("/members/{member_id}/certificate/{milestone}.pdf")
+async def hours_certificate(member_id: str, milestone: int, user=Depends(get_current_user)):
+    m = await db.members.find_one({"id": member_id}, {"_id": 0})
+    if not m:
+        raise HTTPException(404, "Not found")
+    if user["role"] not in STAFF_ROLES and m.get("user_id") != user["user_id"]:
+        raise HTTPException(403, "Forbidden")
+    if milestone not in HOUR_MILESTONES:
+        raise HTTPException(400, "Invalid milestone")
+    total = 0.0
+    async for e in db.service_hours.find({"member_id": member_id, "status": "approved"}, {"_id": 0, "hours": 1}):
+        total += e.get("hours", 0) or 0
+    if total < milestone:
+        raise HTTPException(400, f"Member has not reached {milestone} approved hours")
+    pdf = _certificate_pdf_bytes(m.get("name"), milestone, round(total, 2), (m.get("role") or "volunteer").title())
+    return StreamingResponse(io.BytesIO(pdf), media_type="application/pdf",
+                             headers={"Content-Disposition": f'attachment; filename=certificate_{milestone}h.pdf'})
+
+
+@api_router.get("/checkin-assignable")
+async def checkin_assignable(user=Depends(require_roles(*STAFF_ROLES))):
+    users = await db.users.find({}, {"_id": 0, "user_id": 1, "name": 1, "email": 1, "role": 1}).sort("name", 1).to_list(2000)
+    return [{"user_id": u.get("user_id"), "name": u.get("name"), "email": u.get("email"), "role": u.get("role")}
+            for u in users if u.get("user_id")]
+
 
 # ---------------- resources ----------------
 class ResourceIn(BaseModel):

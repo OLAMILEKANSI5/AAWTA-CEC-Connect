@@ -19,6 +19,12 @@ export const EventManage = ({ event, onClose }) => {
   useEffect(() => { const t = setTimeout(load, 250); return () => clearTimeout(t); /* eslint-disable-next-line */ }, [q]);
 
   const checkin = async (r, val) => { await api.put(`/registrations/${r.id}/checkin`, { checked_in: val }); load(); };
+  const [assignable, setAssignable] = useState([]);
+  const [assigned, setAssigned] = useState(new Set(event.checkin_assignees || []));
+  const [assignQ, setAssignQ] = useState("");
+  useEffect(() => { api.get("/checkin-assignable").then((r) => setAssignable(r.data)).catch(() => {}); }, []);
+  const toggleAssign = (uid) => setAssigned((prev) => { const n = new Set(prev); n.has(uid) ? n.delete(uid) : n.add(uid); return n; });
+  const saveAssignees = async () => { try { await api.put(`/events/${event.id}/checkin-assignees`, { user_ids: [...assigned] }); toast.success("Check-in volunteers updated"); } catch { toast.error("Failed"); } };
   const addWalkin = async () => { if (!walkin.first_name) { toast.error("First name required"); return; } if (!walkin.email && !walkin.phone) { toast.error("Email or phone required"); return; } try { const { data: r } = await api.post(`/events/${event.id}/registrations`, walkin); setWalkin({ first_name: "", last_name: "", email: "", phone: "", state: "", member_status: "Unknown", ticket_category: "General Admission" }); toast.success("Walk-in checked in"); load(); } catch (e) { toast.error(e?.response?.data?.detail || "Failed"); } };
 
   return (
@@ -27,7 +33,7 @@ export const EventManage = ({ event, onClose }) => {
         <DialogHeader><DialogTitle>Manage — {event.name}</DialogTitle></DialogHeader>
         <div className="flex gap-4 text-sm text-slate-500 mb-2"><span className="flex items-center gap-1"><Users size={14} /> {data.total} registered</span><span className="flex items-center gap-1"><CheckCircle2 size={14} /> {data.checked_in} checked in</span></div>
         <Tabs defaultValue="registrations" className="min-w-0 w-full">
-          <TabsList><TabsTrigger value="registrations">Registrations</TabsTrigger><TabsTrigger value="checkin">Check-In</TabsTrigger><TabsTrigger value="badges">Badge Center</TabsTrigger></TabsList>
+          <TabsList><TabsTrigger value="registrations">Registrations</TabsTrigger><TabsTrigger value="checkin">Check-In</TabsTrigger><TabsTrigger value="volunteers" data-testid="tab-volunteers">Volunteers</TabsTrigger><TabsTrigger value="badges">Badge Center</TabsTrigger></TabsList>
 
           <TabsContent value="registrations" className="min-w-0">
             <RegistrationTable event={event} onMutate={load} />
@@ -54,6 +60,25 @@ export const EventManage = ({ event, onClose }) => {
                   <Button size="sm" variant={r.checked_in ? "outline" : "default"} onClick={() => checkin(r, !r.checked_in)} data-testid={`checkin-${r.id}`} className={r.checked_in ? "text-emerald-600 border-emerald-200" : "bg-brand-magenta hover:bg-brand-pink"}>{r.checked_in ? "Checked In ✓" : "Check In"}</Button>
                 </div>
               ))}
+            </div>
+          </TabsContent>
+
+          <TabsContent value="volunteers" className="min-w-0" data-testid="volunteers-panel">
+            <p className="text-sm text-slate-500 mb-2">Assign volunteers or staff to run check-in for this event. They'll get access to the Check-In Center and it appears on their profile.</p>
+            <div className="relative mb-2"><Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={15} /><Input placeholder="Search people…" value={assignQ} onChange={(e) => setAssignQ(e.target.value)} className="pl-9" data-testid="assignee-search" /></div>
+            <div className="space-y-1 max-h-72 overflow-y-auto border border-slate-100 rounded-lg p-2">
+              {assignable.filter((u) => !assignQ || (u.name || "").toLowerCase().includes(assignQ.toLowerCase())).map((u) => (
+                <label key={u.user_id} className="flex items-center gap-2 p-2 rounded hover:bg-slate-50 cursor-pointer text-sm" data-testid={`assignee-${u.user_id}`}>
+                  <input type="checkbox" checked={assigned.has(u.user_id)} onChange={() => toggleAssign(u.user_id)} className="accent-[#D6189B]" />
+                  <span className="font-medium text-slate-800">{u.name}</span>
+                  <span className="text-xs text-slate-400">{u.role}</span>
+                </label>
+              ))}
+              {assignable.length === 0 && <p className="text-sm text-slate-400 p-2">No assignable users found.</p>}
+            </div>
+            <div className="flex items-center justify-between mt-3">
+              <span className="text-xs text-slate-500">{assigned.size} assigned</span>
+              <Button size="sm" onClick={saveAssignees} data-testid="save-assignees-btn" className="bg-brand-magenta hover:bg-brand-pink">Save assignments</Button>
             </div>
           </TabsContent>
 

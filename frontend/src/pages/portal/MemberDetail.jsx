@@ -9,6 +9,7 @@ import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { ROLE_LABELS } from "@/lib/constants";
 import { CommsPanel } from "@/components/CommsPanel";
+import { MemberHoursTab } from "@/components/MemberHoursTab";
 
 export default function MemberDetail() {
   const { id } = useParams();
@@ -34,7 +35,7 @@ export default function MemberDetail() {
       <div className="grid lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 space-y-5">
           <Tabs defaultValue="profile">
-            <TabsList><TabsTrigger value="profile">Profile</TabsTrigger><TabsTrigger value="onboarding">Onboarding</TabsTrigger><TabsTrigger value="goals">Goals</TabsTrigger><TabsTrigger value="comms" data-testid="tab-comms">Communications</TabsTrigger><TabsTrigger value="timeline">Timeline</TabsTrigger></TabsList>
+            <TabsList><TabsTrigger value="profile">Profile</TabsTrigger><TabsTrigger value="onboarding">Onboarding</TabsTrigger><TabsTrigger value="goals">Goals</TabsTrigger><TabsTrigger value="hours" data-testid="tab-hours">Service Hours</TabsTrigger><TabsTrigger value="comms" data-testid="tab-comms">Communications</TabsTrigger><TabsTrigger value="timeline">Timeline</TabsTrigger></TabsList>
             <TabsContent value="profile">
               <div className="bg-white border border-slate-200 rounded-xl p-5 grid sm:grid-cols-2 gap-x-6 gap-y-3">
                 {[["Email", m.email], ["Login email", m.login_email], ["Phone", m.phone], ["City", m.city], ["County", m.county], ["Company", m.company], ["Job title", m.job_title], ["Region", m.region], ["Assigned Director", m.assigned_director], ["Membership", m.membership_status], ["Start date", m.start_date && new Date(m.start_date).toLocaleDateString()]].map(([k, v]) => (
@@ -59,6 +60,9 @@ export default function MemberDetail() {
             </TabsContent>
             <TabsContent value="comms">
               <CommsPanel subjectType="member" subjectId={id} />
+            </TabsContent>
+            <TabsContent value="hours">
+              <MemberHoursTab memberId={id} milestones={m.hour_milestones || []} />
             </TabsContent>
             <TabsContent value="timeline">
               <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-3">

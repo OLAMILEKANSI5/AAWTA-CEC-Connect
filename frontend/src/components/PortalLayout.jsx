@@ -3,7 +3,7 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
   LayoutDashboard, FileText, Users, UserCircle, ClipboardCheck, FileSignature,
   MessageSquare, Megaphone, Calendar, Target, BookOpen, BarChart3, ScrollText,
-  Settings as SettingsIcon, ShieldCheck, LogOut, Bell, Menu, X, Mail, Workflow,
+  Settings as SettingsIcon, ShieldCheck, LogOut, Bell, Menu, X, Mail, Workflow, Clock,
 } from "lucide-react";
 import { Logo } from "@/components/Logo";
 import { useAuth, api } from "@/auth";
@@ -25,6 +25,7 @@ const NAV_ITEMS = [
   { to: "/portal/announcements", label: "Announcements", icon: Megaphone, roles: "all" },
   { to: "/portal/events", label: "Events | Calendar", icon: Calendar, roles: "all" },
   { to: "/portal/goals", label: "Goals & Activity", icon: Target, roles: "all" },
+  { to: "/portal/service-hours", label: "Service Hours", icon: Clock, roles: "all" },
   { to: "/portal/resources", label: "Resource Center", icon: BookOpen, roles: "all" },
   { to: "/portal/reports", label: "Reports", icon: BarChart3, roles: STAFF },
   { to: "/portal/templates", label: "Message Templates", icon: Mail, roles: STAFF },
