@@ -1,0 +1,39 @@
+{
+  "summary": "Group 3 (Volunteer Service Hours + Time Tracking, Milestone Certificates, Check-In Assignment) verified end-to-end. Backend: new pytest suite test_group3_hours_certs_assign.py — 21/21 pass in ~4s covering: clock-in creates 'active' + second clock-in -> 400; clock-out sets 'pending' with computed hours; clock-out with none active -> 400; clock/manual without linked member profile -> 400 (validated with admin who has no member profile); manual hours ok + <=0/>24 -> 400; /service-hours/me shape (entries, summary{approved,pending,active,earned_milestones}, milestones_available=[20,50,100], member_id) with earned_milestones containing 20 from seeded data; member can DELETE own pending, cannot delete approved (400), non-owner non-staff -> 403; staff list has entries/counts{pending,approved,rejected,active}/totals and non-staff -> 403; PUT /status invalid -> 400, non-staff -> 403, approve -> 200; PUT /{id} edit staff-only (member 403, staff 200 persists); /service-hours/summary rows include mem_memba with approved>=20; /service-hours/export.csv 200 + text/csv + expected header columns; certificate 20.pdf -> 200 with %PDF; 50.pdf -> 400 (below); milestone 33 invalid -> 400; non-owner non-staff -> 403; staff can access any cert -> 200; GET /checkin-assignable staff-only (4+ users, correct shape) + non-staff 403; PUT /events/{id}/checkin-assignees notifies newly-added user (verified +1 notification), does NOT re-notify when same set re-saved, and adds a timeline entry to the member profile of the newly-added user (verified via timeline collection). Regression: prior group1/group2/group3-events-gallery suites still 47 passed / 1 skipped. Frontend: /portal/service-hours renders role-adaptive UI. STAFF sees admin-hours with hours-tab-{pending(0)|approved(2)|rejected(0)|active(0)} counts, hours-month, hours-export, hours-summary (Member PhaseA 22h chip), admin-hours-row-* with reject-hours-{id}/edit-hours-{id}; edit dialog opens with save-hours-edit. MEMBER (ambassador tok_amb_g3test) sees member-hours with 3 summary cards (Approved 22, Pending 0, Milestones 1), Recognition section with cert-20 (earned) and NO cert-50/cert-100 as expected, clock-activity/clock-category/clock-in-btn/add-manual-btn; manual dialog opens with manual-hours/manual-submit-btn; 2 history rows. EventManage Volunteers tab: 'Manage — event' dialog -> tab-volunteers -> volunteers-panel with 4 assignee-* checkboxes (search works) + save-assignees-btn. MemberDetail /portal/members/mem_memba -> tab-hours -> member-hours-tab shows 22h/0h totals with member-cert-20 button visible (member-cert-50 hidden) and mh-reject-{id} for 2 approved entries (mh-approve hidden since all approved).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Submit hours manually dialog", "issues": ["Layout: on desktop the modal overlays the page but Date field is quite narrow while Hours field is huge — asymmetric column widths make the form feel unbalanced. Cosmetic only."]},
+      {"screen": "MemberDetail Service Hours tab", "issues": ["Delete/'x' button next to approved entries visually implies deletion but backend returns 400 for approved (correctly). Consider hiding the X icon when status=='approved' to avoid mis-clicks (mirrors the ServiceHours page behavior which already hides it for approved)."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_group3_hours_certs_assign.py",
+    "/app/test_reports/pytest/group3_hours_it17.xml"
+  ],
+  "action_items": [
+    "OPTIONAL cosmetic: hide the delete 'x' on approved entries inside MemberHoursTab.jsx (line ~40) to match ServiceHours.jsx member-side behavior.",
+    "OPTIONAL: balance Date/Hours column widths in ServiceHours.jsx manual dialog (grid uses 2 cols but Date input has type=date with narrow visible width)."
+  ],
+  "critical_code_review_comments": [
+    "server.py DELETE /service-hours/{hid}: staff can delete ANY entry including approved (no 400 guard). Fine for admin override, but there is no audit warning and no 'reverse milestone' — deleting an approved 2h entry that brought total to 20 will NOT revoke the earned milestone (hour_milestones list is add-only in _check_hour_milestones). Consider recomputing milestones on delete/edit-away-from-approved to keep hour_milestones consistent.",
+    "server.py _check_hour_milestones only runs on set_hours_status(approved) and edit_hours when status=='approved'. If a status is changed from approved -> rejected via PUT /status, previously earned milestones stay on the member indefinitely even if total drops below threshold. Add a recompute-on-demote path.",
+    "server.py clock_in: 'active' rows have hours=0.0 but summary includes active as a separate object (not summed). OK for /me, but the admin totals aggregation in list_service_hours excludes 'active' from totals (only sums approved+pending) — the docstring hint 'active hours do not count' matches, but on the UI admin totals card there is no line for potential active volunteers currently clocked-in, which staff might want to see.",
+    "checkin_assignable returns ALL users regardless of account_status. Suspended/inactive users still appear in the assignable list. Consider filtering account_status=='active'.",
+    "PUT /events/{id}/checkin-assignees requires get_current_user (not STAFF_ROLES) and allows event owner (ambassador) to set assignees. However, GET /checkin-assignable is STAFF_ROLES only, so a non-staff owner cannot fetch the list to know which user_ids to assign. Either restrict the PUT to staff too, or expose a scoped assignable list to event owners.",
+    "server.py now 3674 lines. Split service_hours + certificates into their own module.",
+    "MemberHoursTab shows an 'x' icon on every entry regardless of status; clicking it on approved returns 400 from backend (correct) but UX-wise the icon should be hidden or disabled for approved (mirrors ServiceHours member-side pattern)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_group3_hours_certs_assign.py (new)"
+  ],
+  "success_rate": {"backend": "100% (21/21 new + 47/48 regression, 1 skipped)", "frontend": "100% on tested flows"},
+  "test_credentials": "Authorization: Bearer tok_admtest (super_admin); Authorization: Bearer tok_amb_g3test (ambassador linked to member mem_memba). UI cookie session_token=<token> + localStorage cec_has_session=1. Ambassador tok_g3other seeded by test for 403 checks.",
+  "seed_data_creation": "Test suite ensures ambassador linkage (member mem_memba.user_id=user_g3amb, role ambassador) and seeds tok_g3other/user_g3other volunteer. Test-created service_hours (TEST_G3H) are deleted in module teardown; lingering 'active' rows cleaned up. One TEST_G3H CheckinEvent created and dropped per run.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Reusable pytest suite: /app/backend/tests/test_group3_hours_certs_assign.py (21 tests ~4s, xdist-safe). Testids covered: admin-hours, hours-tab-{status}, hours-month, hours-export, hours-summary, admin-hours-row-{id}, approve/reject/edit-hours-{id}, save-hours-edit; member-hours, cert-{20|50|100}, clock-{in|out}-btn, clock-activity/category/notes, add-manual-btn, manual-hours/submit-btn, hours-row-{id}, delete-hours-{id}; tab-volunteers/volunteers-panel/assignee-{uid}/save-assignees-btn; tab-hours/member-hours-tab/member-cert-{ms}/mh-approve-{id}/mh-reject-{id}. Member mem_memba currently has 22h approved and milestone 20 earned (do not delete via test). Manual dialog Date input is a native browser date picker — future tests should use fill with 'YYYY-MM-DD'.",
+  "rca of the issue": "No functional bugs found. Two design/code-quality observations noted above (delete-icon-on-approved UI mismatch; milestone list not recomputed on demote/delete)."
+}

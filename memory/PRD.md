@@ -159,8 +159,21 @@ Part of a large Ambassador/Volunteer lifecycle overhaul (build order: Messaging 
 - Frontend: staff-only 'Photo Gallery' subtab on /portal/events → GalleryReview.jsx (pending/approved/rejected tabs w/ counts, thumbnails, Approve/Reject/Reset). Public Gallery unchanged (reads /public/gallery).
 - Verified: iteration_16 — 14/14 backend pytest + full UI (desktop + iPhone 390px). Suite /app/backend/tests/test_group3_events_gallery.py. Fixed post-review: public-image predicate aligned to `published`; Edit dialog a11y (DialogDescription).
 
+## Implemented (2026-06, Group 3 — Volunteer Service Hours + Check-In Assignment + Milestone Certificates)
+### Service hours / time tracking (`service_hours` collection; intern-reusable)
+- Member: POST /api/service-hours/clock-in (one 'active' at a time; 2nd→400), /clock-out (computes hours→'pending'), POST /api/service-hours (manual, 0<h≤24), GET /service-hours/me (entries+summary{approved,pending,active,earned_milestones}), DELETE own pending/active (approved→400, non-owner→403). Requires a linked member profile.
+- Admin: GET /service-hours?status=&member_id=&event_id=&activity_type=&month=&date_from/to (+counts+totals), GET /service-hours/summary (per-volunteer totals), GET /service-hours/export.csv, PUT /service-hours/{id}/status (approve/reject/pending), PUT /service-hours/{id} (edit). Only APPROVED hours count.
+- Milestones 20/50/100: `_check_hour_milestones` is a full RECONCILE (adds on cross, revokes on demote/delete) → member.hour_milestones; notifies member on new milestone. Called from status change, edit, and delete.
+- Certificates: GET /api/members/{id}/certificate/{20|50|100}.pdf (reportlab landscape cert; 400 if below/invalid, 403 non-owner non-staff).
+### Check-In Volunteer Assignment
+- GET /api/checkin-assignable (staff; excludes suspended/deactivated). PUT /events/{id}/checkin-assignees now notifies ONLY newly-added users + writes a timeline entry on their member profile (no re-notify on resave).
+### Frontend
+- /portal/service-hours (ServiceHours.jsx, nav 'Service Hours', all roles): role-adaptive — members get clock in/out + manual submit + summary + recognition certificate downloads + history; staff get review tabs (pending/approved/rejected/active) w/ counts, month filter, CSV export, per-volunteer totals, approve/reject/edit.
+- EventManage 'Volunteers' tab: searchable assignee checkboxes + Save. MemberDetail 'Service Hours' tab (MemberHoursTab.jsx): totals, certificate buttons, approve/reject.
+- Verified: iteration_17 — 21/21 new backend pytest + 47/48 regression + full UI (member & admin). Suite /app/backend/tests/test_group3_hours_certs_assign.py. Post-review fix: milestone reconcile on demote/delete (verified reject→revoke, re-approve→restore); assignable filters inactive users.
+
 ## Next Tasks (this overhaul)
-- GROUP 3: Volunteer service hours (clock in/out, manual submit, admin approve/edit/reject, totals/filters/CSV, milestones 20/50/100+ with auto downloadable certificate PDFs [user-approved, must not delay core], intern-reusable) + Check-In integration; Check-In Volunteer Assignment UI (checkin-assignees endpoint exists).
+- GROUP 5: Mobile/iOS readiness (responsive/touch pass, role-scoped mobile nav, deep-link + push-ready architecture, Apple Beta Readiness Ready/Needs-Work/Not-Yet matrix).
 - GROUP 4: Resources Calendar button → /events; fix event image not showing on published events; Edit/Update published events (all fields).
 - GROUP 5: Mobile/iOS readiness (responsive/touch pass, role-scoped mobile nav, deep-link + push-ready architecture, Apple Beta Readiness matrix).
 - GROUP 6: E2E workflow testing; then P2 (Google Calendar sync, server.py router refactor, recognition/certificates, reporting enhancements).

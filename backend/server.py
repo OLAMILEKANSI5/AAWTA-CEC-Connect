@@ -2942,18 +2942,17 @@ async def _check_hour_milestones(member_id, user):
     m = await db.members.find_one({"id": member_id}, {"_id": 0})
     if not m:
         return []
-    earned = set(m.get("hour_milestones") or [])
-    newly = [ms for ms in HOUR_MILESTONES if total >= ms and ms not in earned]
-    if newly:
-        earned.update(newly)
-        await db.members.update_one({"id": member_id}, {"$set": {"hour_milestones": sorted(earned)}})
-        for ms in newly:
-            await add_timeline("member", member_id, f"Reached {ms} approved service hours", user)
-            if m.get("user_id"):
-                await notify_user(m["user_id"], f"Milestone reached: {ms} hours!",
-                                  f"You've completed {ms} approved service hours — download your certificate.",
-                                  "/portal/service-hours", "success")
-    return sorted(earned)
+    earned_before = set(m.get("hour_milestones") or [])
+    should = {ms for ms in HOUR_MILESTONES if total >= ms}
+    if should != earned_before:
+        await db.members.update_one({"id": member_id}, {"$set": {"hour_milestones": sorted(should)}})
+    for ms in sorted(should - earned_before):
+        await add_timeline("member", member_id, f"Reached {ms} approved service hours", user)
+        if m.get("user_id"):
+            await notify_user(m["user_id"], f"Milestone reached: {ms} hours!",
+                              f"You've completed {ms} approved service hours — download your certificate.",
+                              "/portal/service-hours", "success")
+    return sorted(should)
 
 
 class ClockInIn(BaseModel):
@@ -3115,8 +3114,9 @@ async def set_hours_status(hid: str, payload: HoursStatusIn, user=Depends(requir
     await db.service_hours.update_one({"id": hid}, {"$set": {"status": payload.status, "review_note": payload.note,
                                                              "reviewed_by": user["name"], "reviewed_at": now_iso(), "updated_at": now_iso()}})
     await log_audit(user, f"service_hours_{payload.status}", "service_hours", hid, {"member_id": e.get("member_id")})
-    if payload.status == "approved" and e.get("member_id"):
-        await add_timeline("member", e["member_id"], f"{e.get('hours')}h approved", user)
+    if e.get("member_id"):
+        if payload.status == "approved":
+            await add_timeline("member", e["member_id"], f"{e.get('hours')}h approved", user)
         await _check_hour_milestones(e["member_id"], user)
     return await db.service_hours.find_one({"id": hid}, {"_id": 0})
 
@@ -3141,7 +3141,7 @@ async def edit_hours(hid: str, payload: HoursEditIn, user=Depends(require_roles(
     upd["updated_at"] = now_iso()
     await db.service_hours.update_one({"id": hid}, {"$set": upd})
     await log_audit(user, "service_hours_edited", "service_hours", hid, {"fields": list(upd.keys())})
-    if e["status"] == "approved" and e.get("member_id"):
+    if e.get("member_id"):
         await _check_hour_milestones(e["member_id"], user)
     return await db.service_hours.find_one({"id": hid}, {"_id": 0})
 
@@ -3157,6 +3157,8 @@ async def delete_hours(hid: str, user=Depends(get_current_user)):
         raise HTTPException(400, "Approved hours cannot be deleted")
     await db.service_hours.delete_one({"id": hid})
     await log_audit(user, "service_hours_deleted", "service_hours", hid)
+    if e.get("member_id"):
+        await _check_hour_milestones(e["member_id"], user)
     return {"ok": True}
 
 
@@ -3207,7 +3209,8 @@ async def hours_certificate(member_id: str, milestone: int, user=Depends(get_cur
 
 @api_router.get("/checkin-assignable")
 async def checkin_assignable(user=Depends(require_roles(*STAFF_ROLES))):
-    users = await db.users.find({}, {"_id": 0, "user_id": 1, "name": 1, "email": 1, "role": 1}).sort("name", 1).to_list(2000)
+    users = await db.users.find({"account_status": {"$nin": ["suspended", "deactivated"]}},
+                                {"_id": 0, "user_id": 1, "name": 1, "email": 1, "role": 1}).sort("name", 1).to_list(2000)
     return [{"user_id": u.get("user_id"), "name": u.get("name"), "email": u.get("email"), "role": u.get("role")}
             for u in users if u.get("user_id")]
 
