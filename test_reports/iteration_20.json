@@ -1,0 +1,37 @@
+{
+  "summary": "Goal Progress Notes + Activity History feature verified end-to-end. Backend pytest: 12/12 pass (test_goal_notes.py). UI: verified as admin & as ambassador on /portal/goals and /portal/members/{id} Goals tab. All notes persisted (no overwrite), history timeline captured Goal created / Progress changed / Status changed / Note added events, 'Needs Support' present in both quick-status dropdown and dialog, quick slider + status still update via PUT /api/goals/{id}, significant status changes (Needs Support/Deferred/Achieved) fired in-app Leadership notifications under category 'Goals' (verified via /api/notifications and via UI reload), and non-significant status change (In Progress) did NOT create a Goals notification. Member self-note works; other-member 403 confirmed via API. MemberDetail Goals tab renders GoalCard with expandable Notes & History (screenshot). Mobile viewport 390px cards stack cleanly and dialog remains usable.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Update / Add Note dialog", "issues": ["React accessibility warning: 'Missing Description or aria-describedby for DialogContent' — non-blocking, but shadcn Dialog should include a DialogDescription for screen-reader compliance."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_goal_notes.py",
+    "/app/test_reports/pytest/goal_notes.xml"
+  ],
+  "action_items": [
+    "OPTIONAL a11y: add <DialogDescription> to the Update Goal dialog (and any other DialogContent without one) to silence the shadcn-radix warning about aria-describedby."
+  ],
+  "critical_code_review_comments": [
+    "backend/server.py is now 3936 lines — still well past the 700-line guideline; the goals section (~120 lines) is a good candidate for extraction into backend/routers/goals.py alongside the helpers _goal_change_ops and _notify_leadership_goal.",
+    "Frontend GoalCard.jsx: quick slider uses onMouseUp AND onTouchEnd but not onKeyUp — keyboard users won't fire the PUT (accessibility gap for range input).",
+    "GoalCard dialog Save Note button only guards against 'no change' locally; the backend correctly returns 400 for empty payloads (validated).",
+    "Notes are pushed with $push (unbounded array growth) — for a long-lived goal with dozens of notes/history rows the goal document could balloon. Consider a soft cap or migrating to a separate goal_notes collection long-term."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_goal_notes.py (new)"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "Admin: tok_admtest ; Ambassador (owner): tok_amb_g3test ; Volunteer (non-owner): tok_g3other",
+  "seed_data_creation": "Created 11 QA-prefixed goals + a handful of QA notifications during testing; all cleaned up via post-run mongo delete_many({title:/^QA /}). test_goal_notes.py is idempotent (creates & deletes its own goal per test).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Feature is fully green. UI testids to remember: goal-<id>, goal-add-note-<id>, goal-save-note-<id>, goal-toggle-history-<id>, goal-history-panel-<id>, goal-note-<noteId>, goal-progress-<id>, goal-status-<id>. Textarea inside the dialog uses data-testid='field-note' (from shared Field component), NOT name='note' — use field-<name> selectors for FormFields. Backend endpoint POST /api/goals/{id}/notes returns 400 on empty payloads and 403 for non-owner members.",
+  "rca of the issue": "N/A — no defect. Only cosmetic a11y warning about missing DialogDescription."
+}

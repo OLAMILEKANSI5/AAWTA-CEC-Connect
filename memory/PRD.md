@@ -192,6 +192,13 @@ Part of a large Ambassador/Volunteer lifecycle overhaul (build order: Messaging 
 - Frontend now requests thumbnails with `loading="lazy"`: EventCard w=500, Gallery grid w=500 (lightbox full-res), Home spotlights w=400, Directory w=500, PublicEventDetail hero w=1200.
 - Verified: iteration_19 — 8/8 backend pytest (test_phase2_phase3.py) + 5/5 verify_phase2.py + full UI. No defects.
 
+## Implemented (2026-06, Goal Progress Notes + Activity History)
+- Each goal now has `notes[]` (text, author name/role, status & progress at time of note, timestamp) and `history[]` timeline (Goal created / Progress changed / Status changed / Note added, with actor + timestamp). Notes never overwrite — full history preserved.
+- NEW `POST /api/goals/{id}/notes` (body {note?, status?, progress?}) — add a note and optionally change status/progress in one submit; staff-or-owner only (403 otherwise). `PUT /api/goals/{id}` also records history now.
+- New goal status **"Needs Support"**. On update to **Achieved / Deferred / Needs Support**, all Leadership get an in-app notification (category "Goals") + an email to directors (notify_admins). Non-significant statuses do not notify.
+- Frontend: reusable `components/GoalCard.jsx` (quick slider/status kept + "Update / Add Note" dialog + expandable "Notes & History"). Used on Goals page and MemberDetail Goals tab (leadership can see the "why"). Mobile-friendly. Monthly Activity Report unchanged.
+- Verified: iteration_20 — 12/12 backend pytest (test_goal_notes.py) + full UI, 100% pass, no defects.
+
 ## Next Tasks (remaining from the 10-part request)
 - P1: **Notification Center UI** — consolidate leadership notifications with category filters (Messages, Applications, Onboarding, Documents, Members) + quick action links.
 - P2: **Server refactor** — split 3800+ line server.py into routers (files/images, members, applications, reminders, dashboards); migrate deprecated @app.on_event startup/shutdown → lifespan.
