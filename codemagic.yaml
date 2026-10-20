@@ -1,0 +1,36 @@
+workflows:
+  ios-capacitor:
+    name: AAWTA iOS
+    instance_type: mac_mini_m2
+    max_build_duration: 120
+    integrations:
+      app_store_connect: aawta_app_store_connect
+    environment:
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: org.aawta.mobile
+      vars:
+        XCODE_WORKSPACE: frontend/ios/App/App.xcworkspace
+        XCODE_SCHEME: App
+      node: 20
+    scripts:
+      - name: Install frontend dependencies
+        script: |
+          cd frontend
+          yarn install --frozen-lockfile
+      - name: Build web app and sync Capacitor
+        script: |
+          cd frontend
+          yarn build
+          npx cap sync ios
+      - name: Apply iOS signing profiles
+        script: xcode-project use-profiles
+      - name: Build IPA
+        script: xcode-project build-ipa --workspace "$CM_BUILD_DIR/$XCODE_WORKSPACE" --scheme "$XCODE_SCHEME"
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true
