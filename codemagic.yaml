@@ -10,6 +10,7 @@ workflows:
         distribution_type: app_store
         bundle_identifier: org.aawta.mobile
       vars:
+        BUNDLE_ID: org.aawta.mobile
         XCODE_WORKSPACE: frontend/ios/App/App.xcworkspace
         XCODE_SCHEME: App
       node: 20
@@ -23,6 +24,8 @@ workflows:
           cd frontend
           yarn build
           npx cap sync ios
+      - name: Fetch App Store signing files
+        script: app-store-connect fetch-signing-files "$BUNDLE_ID" --type IOS_APP_STORE --create
       - name: Apply iOS signing profiles
         script: xcode-project use-profiles
       - name: Build IPA
