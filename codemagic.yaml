@@ -11,6 +11,7 @@ workflows:
         bundle_identifier: org.aawta.mobile
       vars:
         BUNDLE_ID: org.aawta.mobile
+        APP_STORE_APPLE_ID: 6822393242
         XCODE_WORKSPACE: frontend/ios/App/App.xcworkspace
         XCODE_SCHEME: App
       node: 20
@@ -24,6 +25,14 @@ workflows:
           cd frontend
           yarn build
           npx cap sync ios
+      - name: Set build number from latest TestFlight build
+        script: |
+          LATEST=$(app-store-connect get-latest-testflight-build-number "$APP_STORE_APPLE_ID" 2>/dev/null | tail -n 1)
+          case "$LATEST" in ''|*[!0-9]*) LATEST=0 ;; esac
+          NEW=$((LATEST + 1))
+          echo "Latest TestFlight build: $LATEST -> using build number $NEW"
+          sed -i '' "s/CURRENT_PROJECT_VERSION = [0-9]*;/CURRENT_PROJECT_VERSION = $NEW;/g" "$CM_BUILD_DIR/frontend/ios/App/App.xcodeproj/project.pbxproj"
+          grep CURRENT_PROJECT_VERSION "$CM_BUILD_DIR/frontend/ios/App/App.xcodeproj/project.pbxproj"
       - name: Apply iOS signing profiles
         script: xcode-project use-profiles
       - name: Build IPA
