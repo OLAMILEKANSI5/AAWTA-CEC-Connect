@@ -11,6 +11,7 @@ workflows:
         bundle_identifier: org.aawta.mobile
       vars:
         BUNDLE_ID: org.aawta.mobile
+        REACT_APP_BACKEND_URL: https://ambassador-hub-29.emergent.host
         APP_STORE_APPLE_ID: 6822393242
         XCODE_WORKSPACE: frontend/ios/App/App.xcworkspace
         XCODE_SCHEME: App
@@ -19,7 +20,7 @@ workflows:
       - name: Install frontend dependencies
         script: |
           cd frontend
-          yarn install --frozen-lockfile
+          yarn install
       - name: Build web app and sync Capacitor
         script: |
           cd frontend
