@@ -5,6 +5,8 @@ import { Logo } from "@/components/Logo";
 import { Button } from "@/components/ui/button";
 import { api, useAuth } from "@/auth";
 import { AlertCircle } from "lucide-react";
+import { Capacitor } from "@capacitor/core";
+import { Browser } from "@capacitor/browser";
 
 export default function Login() {
   const location = useLocation();
@@ -14,7 +16,15 @@ export default function Login() {
 
   useEffect(() => { if (!loading && user) navigate("/portal"); }, [user, loading, navigate]);
 
-  const handleGoogle = () => {
+  const handleGoogle = async () => {
+    // Native iOS app: open the login in Apple's secure browser sheet and come back
+    // through the app's custom URL scheme (handled in App.js).
+    if (Capacitor.isNativePlatform()) {
+      const redirectUrl = "org.aawta.mobile://auth";
+      await Browser.open({ url: `https://auth.emergentagent.com/?redirect=${encodeURIComponent(redirectUrl)}` });
+      return;
+    }
+    // Website: unchanged
     // REMINDER: DO NOT HARDCODE THE URL, OR ADD ANY FALLBACKS OR REDIRECT URLS, THIS BREAKS THE AUTH
     const redirectUrl = window.location.origin + "/portal";
     window.location.href = `https://auth.emergentagent.com/?redirect=${encodeURIComponent(redirectUrl)}`;
