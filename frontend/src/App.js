@@ -4,6 +4,9 @@ import { BrowserRouter, Routes, Route, useLocation, useNavigate, Navigate } from
 import { Toaster } from "@/components/ui/sonner";
 import { AuthProvider, useAuth, api } from "@/auth";
 import { PortalLayout } from "@/components/PortalLayout";
+import { Capacitor } from "@capacitor/core";
+import { App as CapApp } from "@capacitor/app";
+import { Browser } from "@capacitor/browser";
 
 // Public pages
 import Home from "@/pages/public/Home";
@@ -84,6 +87,18 @@ const ProtectedRoute = ({ children, roles }) => {
 
 function AppRouter() {
   const location = useLocation();
+  // Native app: Google login returns here via org.aawta.mobile://auth#session_id=...
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+    let handle;
+    CapApp.addListener("appUrlOpen", async ({ url }) => {
+      if (!url || !url.startsWith("org.aawta.mobile://")) return;
+      const m = url.match(/[#?&]session_id=([^&#]+)/);
+      try { await Browser.close(); } catch (e) { /* sheet already closed */ }
+      if (m) window.location.hash = "session_id=" + m[1];
+    }).then((h) => { handle = h; });
+    return () => { if (handle) handle.remove(); };
+  }, []);
   if (location.hash?.includes("session_id=")) return <AuthCallback />;
   return (
     <Routes>
