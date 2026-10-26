@@ -1,5 +1,13 @@
 {
   "appId": "org.aawta.mobile",
   "appName": "AAWTA CEC Connect",
-  "webDir": "build"
+  "webDir": "build",
+  "plugins": {
+    "CapacitorHttp": {
+      "enabled": true
+    },
+    "CapacitorCookies": {
+      "enabled": true
+    }
+  }
 }
