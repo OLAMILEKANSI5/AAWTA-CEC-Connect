@@ -3,6 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "dependencies": {
+    "@capacitor/app": "^7",
+    "@capacitor/browser": "^7",
     "@capacitor/core": "^7",
     "@capacitor/ios": "^7",
     "@hookform/resolvers": "5.0.1",
